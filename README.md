@@ -1,3 +1,3 @@
-# wheelposer
+# WheelPoser
 
-Stay tuned for ASSETS 2024!
+Please stay tuned for code and dataset releases after ASSETS 2024!
