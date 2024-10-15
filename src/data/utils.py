@@ -9,8 +9,6 @@ from torch.utils.data import DataLoader
 
 from src.data.AMASS import AMASS
 from src.data.WHEELPOSER import WHEELPOSER
-from src.data.DIP import DIP
-
 
 def train_val_split(dataset, train_pct):
     # get the train and val split
@@ -24,37 +22,11 @@ def get_dataset(config=None, test_only=False, fine_tune=False):
     # load the dataset
     print("loading dataset for", model)
 
-    if model == "IMUPoser_WheelPoser_AMASS":
-        if not test_only:
-            train_dataset = AMASS("train", config, stage="full")
-        test_dataset = AMASS("test", config, stage="full")
-    elif model == "IMUPoser_WheelPoser_DIP":
-        if not test_only:
-            train_dataset = DIP("train", config, stage="full")
-        test_dataset = DIP("test", config, stage="full")
-    elif model == "IMUPoser_WheelPoser_WHEELPOSER":
-        if not test_only:
-            train_dataset = WHEELPOSER("train", config, stage="full")
-        test_dataset = WHEELPOSER("test", config, stage="full")
-
-    elif model == "TIP_WheelPoser_AMASS":
-        if not test_only:
-            train_dataset = AMASS("train", config, stage="full")
-        test_dataset = AMASS("test", config, stage="full")
-    elif model == "TIP_WheelPoser_WHEELPOSER":
-        if not test_only:
-            train_dataset = WHEELPOSER("train", config, stage="full")
-        test_dataset = WHEELPOSER("test", config, stage="full")
-
     #IMU2Leaf
-    elif model == "IMU2Leaf_WheelPoser_AMASS":
+    if model == "IMU2Leaf_WheelPoser_AMASS":
         if not test_only:
             train_dataset = AMASS("train", config, stage="imu2leaf")
         test_dataset = AMASS("test", config, stage="imu2leaf")
-    elif model == "IMU2Leaf_WheelPoser_DIP":
-        if not test_only:
-            train_dataset = DIP("train", config, stage="imu2leaf")
-        test_dataset = DIP("test", config, stage="imu2leaf")
     elif model == "IMU2Leaf_WheelPoser_WHEELPOSER":
         if not test_only:
             train_dataset = WHEELPOSER("train", config, stage="imu2leaf")
@@ -65,10 +37,6 @@ def get_dataset(config=None, test_only=False, fine_tune=False):
         if not test_only:
             train_dataset = AMASS("train", config, stage="leaf2full")
         test_dataset = AMASS("test", config, stage="leaf2full")
-    elif model == "Leaf2Full_WheelPoser_DIP":
-        if not test_only:
-            train_dataset = DIP("train", config, stage="leaf2full")
-        test_dataset = DIP("test", config, stage="leaf2full")
     elif model == "Leaf2Full_WheelPoser_WHEELPOSER":
         if not test_only:
             train_dataset = WHEELPOSER("train", config, stage="leaf2full")
@@ -79,10 +47,6 @@ def get_dataset(config=None, test_only=False, fine_tune=False):
         if not test_only:
             train_dataset = AMASS("train", config, stage="full2pose")
         test_dataset = AMASS("test", config, stage="full2pose")
-    elif model == "Full2Pose_WheelPoser_DIP":
-        if not test_only:
-            train_dataset = DIP("train", config, stage="full2pose")
-        test_dataset = DIP("test", config, stage="full2pose")
     elif model == "Full2Pose_WheelPoser_WHEELPOSER":
         if not test_only:
             train_dataset = WHEELPOSER("train", config, stage="full2pose")

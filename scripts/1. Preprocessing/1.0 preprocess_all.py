@@ -39,7 +39,7 @@ def process_amass(smooth_n = 4):
     body_model = art.ParametricModel(paths.smpl_file)
 
     try:
-        processed = [fpath.name for fpath in (config.processed_wheelposer_amass_dip_4 / "AMASS").iterdir()]
+        processed = [fpath.name for fpath in (config.processed_amass_path).iterdir()]
     except:
         processed = []
 
@@ -159,7 +159,7 @@ def process_amass(smooth_n = 4):
             b += l
 
         print('Saving')
-        amass_dir = config.processed_wheelposer_amass_dip_4 / "AMASS"
+        amass_dir = config.processed_amass_path
         amass_dir.mkdir(exist_ok=True, parents=True)
         ds_dir = amass_dir / ds_name
         ds_dir.mkdir(exist_ok=True)
@@ -171,89 +171,6 @@ def process_amass(smooth_n = 4):
         torch.save(out_vrot, ds_dir / 'vrot.pt')
         torch.save(out_vacc, ds_dir / 'vacc.pt')
         print('Synthetic AMASS dataset is saved at', str(ds_dir))
-
-
-
-def process_dipimu(smooth_n = 4, split = "test"):
-    def _syn_acc(v):
-        r"""
-        Synthesize accelerations from vertex positions
-        """
-        mid = smooth_n // 2
-        acc = torch.stack([(v[i] + v[i + 2] - 2 * v[i + 1]) * 3600 for i in range(0, v.shape[0] - 2)])
-        acc = torch.cat((torch.zeros_like(acc[:1]), acc, torch.zeros_like(acc[:1])))
-        if mid != 0:
-            acc[smooth_n:-smooth_n] = torch.stack(
-                [(v[i] + v[i + smooth_n * 2] - 2 * v[i + smooth_n]) * 3600 / smooth_n ** 2
-                 for i in range(0, v.shape[0] - smooth_n * 2)])
-        return acc
-
-
-    imu_mask = [7, 8, 0, 2]
-    # [head, spine2, belly, lchest, rchest, lshoulder, rshoulder, lelbow, relbow, lhip, rhip, lknee, rknee, lwrist, rwrist, lankle, rankle]
-    # [   0,      1,     2,      3,      4,         5,         6,      7,      8,    9,   10,    11,    12,     13,     14,     15,     16]
-    vi_mask = torch.tensor([1961, 5424, 411, 3021])
-    ji_mask = torch.tensor([18, 19, 15, 0])
-
-    if split == "test":
-        test_split = ['s_09', 's_10']
-    else:
-        test_split = ['s_01', 's_02', 's_03', 's_04', 's_05', 's_06', 's_07', 's_08']
-
-    accs, oris, poses, trans, shapes, joints, vrots, vaccs = [], [], [], [], [], [], [], []
-    body_model = art.ParametricModel(paths.smpl_file)
-
-    for subject_name in test_split:
-        for motion_name in os.listdir(os.path.join(paths.raw_dipimu_dir, subject_name)):
-            print(subject_name, motion_name)
-            path = os.path.join(paths.raw_dipimu_dir, subject_name, motion_name)
-            data = pickle.load(open(path, 'rb'), encoding='latin1')
-            acc = torch.from_numpy(data['imu_acc'][:, imu_mask]).float()
-            ori = torch.from_numpy(data['imu_ori'][:, imu_mask]).float()
-            pose = torch.from_numpy(data['gt']).float()
-
-            # fill nan with nearest neighbors
-            for _ in range(4):
-                acc[1:].masked_scatter_(torch.isnan(acc[1:]), acc[:-1][torch.isnan(acc[1:])])
-                ori[1:].masked_scatter_(torch.isnan(ori[1:]), ori[:-1][torch.isnan(ori[1:])])
-                acc[:-1].masked_scatter_(torch.isnan(acc[:-1]), acc[1:][torch.isnan(acc[:-1])])
-                ori[:-1].masked_scatter_(torch.isnan(ori[:-1]), ori[1:][torch.isnan(ori[:-1])])
-
-            acc, ori, pose = acc[6:-6], ori[6:-6], pose[6:-6] #Why?
-            shape = torch.ones((10))
-            tran = torch.zeros(pose.shape[0], 3) # dip-imu does not contain translations
-            if torch.isnan(acc).sum() == 0 and torch.isnan(ori).sum() == 0 and torch.isnan(pose).sum() == 0:
-                accs.append(acc.clone())
-                oris.append(ori.clone())
-                poses.append(pose.clone())
-                trans.append(tran.clone())  # dip-imu does not contain translations
-                shapes.append(shape.clone()) # default shape
-
-                p = art.math.axis_angle_to_rotation_matrix(pose).view(-1, 24, 3, 3)
-                grot, joint, vert = body_model.forward_kinematics(p, shape, tran, calc_mesh=True)
-                vacc = _syn_acc(vert[:, vi_mask])
-                vrot = grot[:, ji_mask]
-                
-                joints.append(joint)
-                vaccs.append(vacc)
-                vrots.append(vrot)
-            else:
-                print('DIP-IMU: %s/%s has too much nan! Discard!' % (subject_name, motion_name))
-
-
-    path_to_save = config.processed_wheelposer_amass_dip_4 / f"DIP_IMU/{split}"
-    path_to_save.mkdir(exist_ok=True, parents=True)
-    
-    torch.save(poses, path_to_save / 'pose.pt')
-    torch.save(shapes, path_to_save / 'shape.pt')
-    torch.save(trans, path_to_save / 'tran.pt')
-    torch.save(joints, path_to_save / 'joint.pt')
-    torch.save(vrots, path_to_save / 'vrot.pt')
-    torch.save(vaccs, path_to_save / 'vacc.pt')
-    torch.save(oris, path_to_save / 'oris.pt')
-    torch.save(accs, path_to_save / 'accs.pt')
-    
-    print('Preprocessed DIP-IMU dataset is saved at', path_to_save)
 
 
 
@@ -296,11 +213,7 @@ def process_wheelposer(smooth_n = 4, split = 'fullset_am'):
 
     if 'am' in split:
         group = 'AM'
-    elif '13' in split:
-        group = 'WU_13'
-    elif '14' in split:
-        group = 'WU_14'
-    elif 'wu_fullset' in split:
+    elif 'wu' in split:
         group = 'WU'
     else:
         return
@@ -336,7 +249,9 @@ def process_wheelposer(smooth_n = 4, split = 'fullset_am'):
 
 
 
-    path_to_save = config.processed_wheelposer_amass_dip_4 / f"WheelPoser_{group}/{split}"
+    # path_to_save = config.processed_wheelposer_4 / f"WheelPoser/{split}"
+    path_to_save = config.processed_wheelposer_path / f"{split}"
+
     path_to_save.mkdir(exist_ok=True, parents=True)
     
     torch.save(poses, path_to_save / 'pose.pt')
@@ -353,9 +268,9 @@ def process_wheelposer(smooth_n = 4, split = 'fullset_am'):
 
 
 if __name__ == '__main__':
-    # process_amass()
+    process_amass()
     # process_dipimu()
-    # process_wheelposer(split='am_fullset')
-    # process_wheelposer(split='wu_13')
-    # process_wheelposer(split='wu_14')
+    process_wheelposer(split='am_fullset')
+    process_wheelposer(split='wu_13')
+    process_wheelposer(split='wu_14')
     process_wheelposer(split='wu_fullset')

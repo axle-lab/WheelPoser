@@ -8,23 +8,7 @@ import datetime
 
 
 # datasets (directory names) in AMASS
-# e.g., for ACCAD, the path should be `paths.raw_amass_dir/ACCAD/s001/*.npz`
-amass_datasets1 = ['ACCAD', 'BioMotionLab_NTroje', 'BMLhandball', 'BMLmovi', 'CMU']
-
-
-amass_datasets2 = ['DanceDB', 'DFaust_67', 'EKUT', 'Eyes_Japan_Dataset', 'HUMAN4D','HumanEva', 'KIT']
-
-amass_datasets3 = ['MPI_HDM05', 'MPI_Limits', 'MPI_mosh', 'SFU', 
-                  'SSM_synced', 'TCD_handMocap', 'TotalCapture', 'Transitions_mocap']
-
-amass_test_dataset = ['ACCAD']
-
-amass_datasets = ['ACCAD', 'BioMotionLab_NTroje', 'BMLhandball', 'BMLmovi', 'CMU',
-                  'DanceDB', 'DFaust_67', 'EKUT', 'Eyes_Japan_Dataset', 'HUMAN4D',
-                  'HumanEva', 'KIT', 'MPI_HDM05', 'MPI_Limits', 'MPI_mosh', 'SFU',
-                  'SSM_synced', 'TCD_handMocap', 'TotalCapture', 'Transitions_mocap']
-
-#including GRAB and 
+#including GRAB and SOMA
 amass_datasets_updated = ['ACCAD', 'BioMotionLab_NTroje', 'BMLhandball', 'BMLmovi', 'CMU',
                   'DanceDB', 'DFaust_67', 'EKUT', 'Eyes_Japan_Dataset', 'GRAB', 'HUMAN4D',
                   'HumanEva', 'KIT', 'MPI_HDM05', 'MPI_Limits', 'MPI_mosh', 'SFU', 'SOMA',
@@ -38,15 +22,7 @@ class paths:
     raw_amass_dir = 'src/data/dataset_raw/AMASS'      # raw AMASS dataset path (raw_amass_dir/ACCAD/ACCAD/s001/*.npz)
     amass_dir = 'src/data/dataset_work/AMASS'         # output path for the synthetic AMASS dataset
     amass_dir_debug = 'src/data/dataset_raw/AMASS_debug'
-
-    raw_dipimu_dir = 'src/data/dataset_raw/DIP_IMU'   # raw DIP-IMU dataset path (raw_dipimu_dir/s_01/*.pkl)
-    dipimu_dir_train = 'src/data/dataset_work/DIP_IMU/Train'      # output path for the preprocessed DIP-IMU dataset
-    dipimu_dir_test = 'src/data/dataset_work/DIP_IMU/Test'      # output path for the preprocessed DIP-IMU dataset
-
-    # DIP recalculates the SMPL poses for TotalCapture dataset. You should acquire the pose data from the DIP authors.
-    raw_totalcapture_dip_dir = 'src/data/dataset_raw/TotalCapture/DIP_recalculate'  # contain ground-truth SMPL pose (*.pkl)
-    raw_totalcapture_official_dir = 'src/data/dataset_raw/TotalCapture/official'    # contain official gt (S1/acting1/gt_skel_gbl_pos.txt)
-    totalcapture_dir = 'src/data/dataset_work/TotalCapture'          # output path for the preprocessed TotalCapture dataset
+    raw_wheelposer_dir = 'src/data/dataset_raw/WheelPoser'  # raw WheelPoser dataset path
 
     example_dir = 'data/example'                    # example IMU measurements
     smpl_file = 'src/smpl/models/basicmodel_m_lbs_10_207_0_v1.0.0.pkl'              # official SMPL model path
@@ -57,11 +33,6 @@ class paths:
 
     imu_recordings_dir = 'src/data/imu_recordings'
     mocap_recordings_dir = 'src/data/mocap_recordings'
-    raw_wheelposer_dir = 'src/data/dataset_raw/WheelPoser'
-    wheelposer_dir = 'src/data/dataset_work/WheelPoser'
-    wheelposer_video_dir = 'src/data/dataset_raw/WheelPoser_Video'
-    wheelposer_video_dir_60fps = 'src/data/dataset_raw/WheelPoser_Video_60fps'
-
 
 class joint_set:
     WheelPoser = [0, 1, 2, 3]
@@ -135,28 +106,23 @@ class Config:
     
     def build_paths(self):
         self.smpl_model_path = self.root_dir / "src/smpl/models/basicmodel_m_lbs_10_207_0_v1.0.0.pkl"              # official SMPL model path
-        self.og_smpl_model_path = self.root_dir / "src/smpl/basicmodel_m_lbs_10_207_0_v1.0.0.pkl"
-        
-        self.raw_dip_path = self.root_dir / "src/data/dataset_raw/DIP_IMU"
         self.raw_amass_path = self.root_dir / "src/data/dataset_raw/AMASS"
+        self.raw_wheelposer_path = self.root_dir / "src/data/dataset_raw/WheelPoser"
+        self.processed_amass_path = self.root_dir / "src/data/dataset_work/PROCESSED/AMASS"
+        self.processed_wheelposer_path = self.root_dir / "src/data/dataset_work/PROCESSED/WheelPoser"
+        self.combined_amass_path = self.root_dir / "src/data/dataset_work/COMBINED/AMASS"
+        self.combined_wheelposer_path = self.root_dir / "src/data/dataset_work/COMBINED/WheelPoser"
+        # self.processed_wheelposer_4 = self.root_dir / "src/data/dataset_work/4Joints/PROCESSED"
+        # self.processed_amass_nn_ready_4 = self.root_dir / "src/data/dataset_work/4Joints/COMBINED/AMASS"        
+        # self.processed_wheelposer_nn_ready_4 = self.root_dir / "src/data/dataset_work/4Joints/COMBINED/WheelPoser"
+        # self.processed_wheelposer_leave_14_out = self.root_dir / "src/data/dataset_work/4Joints/COMBINED/Leave_14_out"
+        # self.processed_wheelposer_leave_13_out = self.root_dir / "src/data/dataset_work/4Joints/COMBINED/Leave_13_out"
 
-        self.processed_wheelposer_amass = self.root_dir / "src/data/dataset_work/AMASS"
-        self.processed_wheelposer_dip = self.root_dir / "src/data/dataset_work/DIP_IMU"
-        self.processed_wheelposer_amass_dip_4 = self.root_dir / "src/data/dataset_work/4Joints/PROCESSED"
-        self.processed_wheelposer_amass_nn_ready_4 = self.root_dir / "src/data/dataset_work/4Joints/COMBINED/AMASS"
-        self.processed_wheelposer_dip_nn_ready_4 = self.root_dir / "src/data/dataset_work/4Joints/COMBINED/DIP"
-        self.processed_wheelposer_amass_dip_nn_ready_4 = self.root_dir / "src/data/dataset_work/4Joints/COMBINED"
-        self.processed_wheelposer_nn_ready_4 = self.root_dir / "src/data/dataset_work/4Joints/COMBINED"
-        self.processed_wheelposer_leave_14_out = self.root_dir / "src/data/dataset_work/4Joints/COMBINED/Leave_14_out"
-        self.processed_wheelposer_leave_13_out = self.root_dir / "src/data/dataset_work/4Joints/COMBINED/Leave_13_out"
-
-
-
-        self.processed_wheelposer_wheelposer_am_nn_ready_4 = self.root_dir / "src/data/dataset_work/4Joints/COMBINED/WheelPoser_AM"
-        self.processed_wheelposer_mixed_nn_ready_4 = self.root_dir / "src/data/dataset_work/4Joints/COMBINED/WD_mixed"
-        self.processed_wheelposer_leave_one_out_wu = self.root_dir / "src/data/dataset_work/4Joints/COMBINED/WU_leave_one_out"
-        self.processed_wheelposer_video = self.root_dir / "src/data/dataset_work/4Joints/COMBINED/Video_data"
-        self.processed_wheelposer_category = self.root_dir / "src/data/dataset_work/4Joints/CATEGORY"
+        # self.processed_wheelposer_wheelposer_am_nn_ready_4 = self.root_dir / "src/data/dataset_work/4Joints/COMBINED/WheelPoser_AM"
+        # self.processed_wheelposer_mixed_nn_ready_4 = self.root_dir / "src/data/dataset_work/4Joints/COMBINED/WD_mixed"
+        # self.processed_wheelposer_leave_one_out_wu = self.root_dir / "src/data/dataset_work/4Joints/COMBINED/WU_leave_one_out"
+        # self.processed_wheelposer_video = self.root_dir / "src/data/dataset_work/4Joints/COMBINED/Video_data"
+        # self.processed_wheelposer_category = self.root_dir / "src/data/dataset_work/4Joints/CATEGORY"
 
         if self.mkdir:
             if self.experiment != None:

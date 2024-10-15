@@ -14,7 +14,7 @@ class IMU2Leaf_WheelPoser(pl.LightningModule):
         super().__init__()
         n_input = 12 * len(config.joints_set)
         self.batch_size = config.batch_size
-        self.dip_model = RNN(n_input = n_input, n_output = joint_set.n_wheelpose_leaf*3, n_hidden = 256, bidirectional = True)
+        self.dip_model = RNN(n_input = n_input, n_output = joint_set.n_wheelposer_leaf*3, n_hidden = 256, bidirectional = True)
 
         if config.loss_type == "l1":
             self.loss = nn.L1Loss()

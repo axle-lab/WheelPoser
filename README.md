@@ -6,6 +6,19 @@ Open-source code, model, and dataset for our ASSETS 2024 paper "WheelPoser: Spar
 
 ![Teaser Image](./media/WheelPoser.png)
 
+## Installation
+
+### Python Environment and Dependencies
+This code was developed in `python 3.7.12`. For dependencies, please install the latest `pytorch chumpy vctoolkit open3d pybullet qpsolvers cvxopt pytorch-lightning`.
+
+*Installing `pytorch` with CUDA is highly recommended.
+
+If you want to use the physics optimization module, please also compile and install [rbdl](https://github.com/rbdl/rbdl) with python bindings and the urdf reader addon enabled.
+
+## Data Preprocessing
+run 1.0 and 1.1
+
+
 Shield: [![CC BY-NC 4.0][cc-by-nc-shield]][cc-by-nc]
 
 This work is licensed under a

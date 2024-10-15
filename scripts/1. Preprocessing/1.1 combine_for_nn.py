@@ -40,11 +40,11 @@ def _resample(tensor, target_fps):
     torch_lerped = torch.lerp(start, end, weights)
     return torch_lerped
 
-path_to_save = config.processed_wheelposer_amass_dip_nn_ready_4
+path_to_save = config.combined_amass_path
 path_to_save.mkdir(exist_ok=True, parents=True)
 
 # process AMASS first
-for fpath in (config.processed_wheelposer_amass_dip_4 / "AMASS").iterdir():
+for fpath in (config.processed_amass_path).iterdir():
     joint = torch.load(fpath / "joint.pt")
     shape = torch.load(fpath / "shape.pt")
     tran = torch.load(fpath / "tran.pt")
@@ -64,8 +64,12 @@ for fpath in (config.processed_wheelposer_amass_dip_4 / "AMASS").iterdir():
     
     torch.save(fdata, path_to_save / f"{fpath.name}.pt")
 
-# process DIP next
-for fpath in (config.processed_wheelposer_amass_dip_4 / "DIP_IMU").iterdir():
+#Update the path to save
+path_to_save = config.combined_wheelposer_path
+path_to_save.mkdir(exist_ok=True, parents=True)
+
+# process WheelPoser
+for fpath in (config.processed_wheelposer_path).iterdir():
     joint = torch.load(fpath / "joint.pt")
     shape = torch.load(fpath / "shape.pt")
     tran = torch.load(fpath / "tran.pt")
@@ -82,91 +86,4 @@ for fpath in (config.processed_wheelposer_amass_dip_4 / "DIP_IMU").iterdir():
         "ori": rot
     }
     
-    torch.save(fdata, path_to_save / f"dip_{fpath.name}.pt")
-
-
-
-# process WheelPoser AM
-for fpath in (config.processed_wheelposer_amass_dip_4 / "WheelPoser_AM").iterdir():
-    joint = torch.load(fpath / "joint.pt")
-    shape = torch.load(fpath / "shape.pt")
-    tran = torch.load(fpath / "tran.pt")
-    acc = torch.load(fpath / "accs.pt")
-    rot = torch.load(fpath / "oris.pt")
-    pose = [math.axis_angle_to_rotation_matrix(x).view(-1,24,3,3)  for x in torch.load(fpath / "pose.pt")]
-    # save the data
-    fdata = {
-        "joint": joint,
-        "pose": pose,
-        "shape": shape,
-        "tran": tran,
-        "acc": acc,
-        "ori": rot
-    }
-    
-    torch.save(fdata, path_to_save / f"wheelposer_{fpath.name}.pt")
-
-
-
-# process WheelPoser WU 13
-for fpath in (config.processed_wheelposer_amass_dip_4 / "WheelPoser_WU_13").iterdir():
-    joint = torch.load(fpath / "joint.pt")
-    shape = torch.load(fpath / "shape.pt")
-    tran = torch.load(fpath / "tran.pt")
-    acc = torch.load(fpath / "accs.pt")
-    rot = torch.load(fpath / "oris.pt")
-    pose = [math.axis_angle_to_rotation_matrix(x).view(-1,24,3,3)  for x in torch.load(fpath / "pose.pt")]
-    # save the data
-    fdata = {
-        "joint": joint,
-        "pose": pose,
-        "shape": shape,
-        "tran": tran,
-        "acc": acc,
-        "ori": rot
-    }
-    
-    torch.save(fdata, path_to_save / f"wheelposer_{fpath.name}.pt")
-
-
-# process WheelPoser WU 14
-for fpath in (config.processed_wheelposer_amass_dip_4 / "WheelPoser_WU_14").iterdir():
-    joint = torch.load(fpath / "joint.pt")
-    shape = torch.load(fpath / "shape.pt")
-    tran = torch.load(fpath / "tran.pt")
-    acc = torch.load(fpath / "accs.pt")
-    rot = torch.load(fpath / "oris.pt")
-    pose = [math.axis_angle_to_rotation_matrix(x).view(-1,24,3,3)  for x in torch.load(fpath / "pose.pt")]
-    # save the data
-    fdata = {
-        "joint": joint,
-        "pose": pose,
-        "shape": shape,
-        "tran": tran,
-        "acc": acc,
-        "ori": rot
-    }
-    
-    torch.save(fdata, path_to_save / f"wheelposer_{fpath.name}.pt")
-
-
-
-# process WheelPoser WU Fullset
-for fpath in (config.processed_wheelposer_amass_dip_4 / "WheelPoser_WU").iterdir():
-    joint = torch.load(fpath / "joint.pt")
-    shape = torch.load(fpath / "shape.pt")
-    tran = torch.load(fpath / "tran.pt")
-    acc = torch.load(fpath / "accs.pt")
-    rot = torch.load(fpath / "oris.pt")
-    pose = [math.axis_angle_to_rotation_matrix(x).view(-1,24,3,3)  for x in torch.load(fpath / "pose.pt")]
-    # save the data
-    fdata = {
-        "joint": joint,
-        "pose": pose,
-        "shape": shape,
-        "tran": tran,
-        "acc": acc,
-        "ori": rot
-    }
-    
-    torch.save(fdata, path_to_save / f"wheelposer_{fpath.name}.pt")
+    torch.save(fdata, path_to_save / f"{fpath.name}.pt")

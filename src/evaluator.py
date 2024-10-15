@@ -12,7 +12,7 @@ from src.articulate.math import *
 import torch
 from src.articulate.model import ParametricModel
 from src.config import Config, limb2joints
-from src.smpl import limb2vertices
+# from src.smpl import limb2vertices
 
 
 class BasePoseEvaluator:
@@ -441,17 +441,17 @@ class WheelPoserEvaluator:
         return torch.stack([errs[9], errs[7] * 100, errs[10] * 100, errs[12] / 100, errs[13]* 100, errs[14]* 100, errs[15], errs[16], errs[17], errs[18]])
 
 
-def get_limb_metrics(je, ve, lae, gae, jkp, jkt, limb):
-    limb_je = je[:, limb2joints[limb]]
-    limb_ve = ve[:, limb2vertices(limb)]
-    limb_lae = lae[:, limb2joints[limb]]
-    limb_gae = gae[:, limb2joints[limb]]
-    limb_jkp = jkp[:, limb2joints[limb]]
-    limb_jkt = jkt[:, limb2joints[limb]]
+# def get_limb_metrics(je, ve, lae, gae, jkp, jkt, limb):
+#     limb_je = je[:, limb2joints[limb]]
+#     limb_ve = ve[:, limb2vertices(limb)]
+#     limb_lae = lae[:, limb2joints[limb]]
+#     limb_gae = gae[:, limb2joints[limb]]
+#     limb_jkp = jkp[:, limb2joints[limb]]
+#     limb_jkt = jkt[:, limb2joints[limb]]
     
-    return torch.Tensor([[limb_je.mean(), limb_je.std(dim=0).mean()],
-                        [limb_ve.mean(), limb_ve.std(dim=0).mean()],
-                        [limb_lae.mean(), limb_lae.std(dim=0).mean()],
-                        [limb_gae.mean(), limb_gae.std(dim=0).mean()],
-                        [limb_jkp.mean(), limb_jkp.std(dim=0).mean()],
-                        [limb_jkt.mean(), limb_jkt.std(dim=0).mean()]])
+#     return torch.Tensor([[limb_je.mean(), limb_je.std(dim=0).mean()],
+#                         [limb_ve.mean(), limb_ve.std(dim=0).mean()],
+#                         [limb_lae.mean(), limb_lae.std(dim=0).mean()],
+#                         [limb_gae.mean(), limb_gae.std(dim=0).mean()],
+#                         [limb_jkp.mean(), limb_jkp.std(dim=0).mean()],
+#                         [limb_jkt.mean(), limb_jkt.std(dim=0).mean()]])
