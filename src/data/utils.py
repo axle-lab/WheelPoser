@@ -71,10 +71,6 @@ def get_dataset(config=None, test_only=False, fine_tune=False):
 def get_datamodule(config):
     model = config.model
     # load the dataset
-    # if model in ["IMUPoser_WheelPoser_AMASS", "IMUPoser_WheelPoser_DIP", "IMUPoser_WheelPoser_WHEELPOSER"]:
-    #     return WheelPoserDataModule(config)
-    # else:
-    #     print("Enter a valid model")
     return WheelPoserDataModule(config)
 
 def pad_seq(batch):

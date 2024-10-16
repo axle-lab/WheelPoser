@@ -28,35 +28,30 @@ class WHEELPOSER(Dataset):
             vel = torch.cat((torch.zeros_like(vel[:1]), vel))
             return vel
         
+        data_folder = self.config.combined_wheelposer_path
 
         if self.train == "train":
             if self.config.exp_setup == "leave_14_out":
-                data_folder = self.config.processed_wheelposer_leave_14_out
-                data_files = [x.name for x in self.config.processed_wheelposer_leave_14_out.iterdir()]
+                data_files = ['wheelposer_am_fullset.pt', 'wheelposer_wu_13.pt']
                 for i in range(self.config.upsample_copies - 1):
                     data_files.append('wheelposer_wu_13.pt')
 
             elif self.config.exp_setup == "leave_13_out":
-                data_folder = self.config.processed_wheelposer_leave_13_out
-                data_files = [x.name for x in self.config.processed_wheelposer_leave_13_out.iterdir()]
+                data_files = ['wheelposer_am_fullset.pt', 'wheelposer_wu_14.pt']
                 for i in range(self.config.upsample_copies - 1):
                     data_files.append('wheelposer_wu_14.pt')
 
             elif self.config.exp_setup == "am_only":
-                data_folder = self.config.processed_wheelposer_nn_ready_4
                 data_files = ['wheelposer_am_fullset.pt']
             else:
                 print("No experiment setup specified")
                 return
         else:
             if self.config.exp_setup == "leave_14_out":
-                data_folder = self.config.processed_wheelposer_nn_ready_4
                 data_files = ['wheelposer_wu_14.pt']
             elif self.config.exp_setup == "leave_13_out":
-                data_folder = self.config.processed_wheelposer_nn_ready_4
                 data_files = ['wheelposer_wu_13.pt']
             elif self.config.exp_setup == "am_only":
-                data_folder = self.config.processed_wheelposer_nn_ready_4
                 data_files = ['wheelposer_wu_fullset.pt']
             else:
                 print("No experiment setup specified")
@@ -93,11 +88,6 @@ class WHEELPOSER(Dataset):
         for fname in data_files:
             print(fname)
             fdata = torch.load(data_folder / fname)
-            # if self.train == "train":
-
-            # else:
-            #     fdata = torch.load(self.config.processed_wheelposer_mixed_nn_ready_4 / fname)
-
             for i in range(len(fdata["acc"])):
                 # inputs
                 facc = fdata["acc"][i] 
@@ -110,9 +100,7 @@ class WHEELPOSER(Dataset):
                     acc = glb_acc
                     ori = glb_ori
                 elif normalize == True:
-                    # TODO: Add this another option
                     # make acc relative to the last imu always
-
                     acc = torch.cat((glb_acc[:, :num_joints-1] - glb_acc[:, num_joints-1:], glb_acc[:, num_joints-1:]), dim=1).bmm(glb_ori[:, -1]) / self.config.acc_scale
                     ori = torch.cat((glb_ori[:, num_joints-1:].transpose(2, 3).matmul(glb_ori[:, :num_joints-1]), glb_ori[:, num_joints-1:]), dim=1)
                 else:
@@ -161,11 +149,6 @@ class WHEELPOSER(Dataset):
 
                 if self.config.use_vel_loss == True:
                     fvel_full = fvel_full.flatten(1)
-
-                # clip the data
-                # 25 is the data sampling rate
-
-                # window_length = self.config.max_sample_len * 25 // 60
 
                 window_length = self.config.max_sample_len
                 if "Transformer" in self.config.model:
@@ -219,7 +202,6 @@ class WHEELPOSER(Dataset):
                     glb_joint_rotations, _ = self.body_model.forward_kinematics(_pose)
                     root_relative_joint_rotations = torch.matmul(glb_joint_rotations[:, 0].unsqueeze(1).transpose(2,3), glb_joint_rotations)
                     _output = math.rotation_matrix_to_r6d(root_relative_joint_rotations).reshape(-1, 24, 6)[:, joint_set.reduced_upper_body].reshape(-1, 6 * len(joint_set.reduced_upper_body))
-                    # _output = math.rotation_matrix_to_r6d(_pose).reshape(-1, 24, 6)[:, joint_set.reduced_upper_body].reshape(-1, 6 * len(joint_set.reduced_upper_body))
                 else:
                     _output = math.rotation_matrix_to_r6d(_pose).reshape(-1, 24, 6)[:, self.config.pred_joints_set].reshape(-1, 6 * len(self.config.pred_joints_set))
             else:

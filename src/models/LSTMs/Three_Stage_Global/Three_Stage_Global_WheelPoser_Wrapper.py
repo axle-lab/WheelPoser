@@ -44,16 +44,7 @@ class Three_Stage_Global_WheelPoser(pl.LightningModule):
         pred_pose = self.forward(imu)
         #get current frame
         pred_pose = pred_pose[self.num_past_frame]
-
-        ## Vimal commenting from here TODO uncomment
         preds_m = r6d_to_rotation_matrix(pred_pose) # the shape of this is 16, 3, 3
-
-        # fill in the rest of the joints with identity
-        # upper_body = [0, 3, 6, 9, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23]
-        # pred_pose = torch.zeros(24, 3, 3).to(self.device)
-
-        # pred_pose[upper_body] = preds_m
-
 
         preds_aa = rotation_matrix_to_axis_angle(preds_m).view(48) # runs on cpu
         pelvis = preds_aa[:3]
@@ -63,7 +54,6 @@ class Three_Stage_Global_WheelPoser(pl.LightningModule):
         angle_between = torch.acos(torch.dot(pelvis_y, world_y)/(torch.norm(pelvis_y)*torch.norm(world_y)))
         angle_between = 90 - angle_between * 180 / np.pi
         hip_angle = (-angle_between) * np.pi / 180
-        # hip_angle = -1.53 - preds_aa[0]
         hip_adjustment = torch.tensor([hip_angle,0,0]).to(self.device) #in radians
         knee_adjustment = torch.tensor([1.46,0,0]).to(self.device) #in radians
         zeros = torch.zeros(3).to(self.device)
@@ -71,8 +61,6 @@ class Three_Stage_Global_WheelPoser(pl.LightningModule):
                                 knee_adjustment, knee_adjustment, preds_aa[6:9], zeros, zeros, 
                                 preds_aa[9:12], zeros, zeros, preds_aa[12:]), dim=0)
         pred_pose = pose.view(72)
-        # pred_pose = axis_angle_to_rotation_matrix(pose).view(24,3,3)
-        #############
         
         self.imu = imu
         # if self.physics:
@@ -89,10 +77,8 @@ class Three_Stage_Global_WheelPoser(pl.LightningModule):
         preds_m = r6d_to_rotation_matrix(pred_pose)
         preds_aa = rotation_matrix_to_axis_angle(preds_m).view(-1, 48)
         hip_angle = -1.53 - preds_aa[:, 0]
-        # hip_adjustment = torch.tensor([hip_angle,0,0]).to(self.device)
         hip_adjustment = torch.zeros(hip_angle.shape[0], 3).to(self.device)
         hip_adjustment = torch.cat((hip_angle.unsqueeze(1), hip_adjustment[:, 1:]), dim=1).to(self.device)
-        # hip_adjustment = torch.tensor([-1.4,0,0]).repeat(preds_aa.shape[0],1).to(self.device) #in radians
         knee_adjustment = torch.tensor([1.46,0,0]).repeat(preds_aa.shape[0],1).to(self.device) #in radians
         zeros = torch.zeros(3).repeat(preds_aa.shape[0],1).to(self.device)
         pose = torch.cat((preds_aa[:, :3], hip_adjustment, hip_adjustment, preds_aa[:, 3:6], 

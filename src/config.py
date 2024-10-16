@@ -112,6 +112,11 @@ class Config:
         self.processed_wheelposer_path = self.root_dir / "src/data/dataset_work/PROCESSED/WheelPoser"
         self.combined_amass_path = self.root_dir / "src/data/dataset_work/COMBINED/AMASS"
         self.combined_wheelposer_path = self.root_dir / "src/data/dataset_work/COMBINED/WheelPoser"
+
+        self.combined_leave_14_out_path = self.root_dir / "src/data/dataset_work/COMBINED/Leave_14_out"
+        self.combined_leave_13_out_path = self.root_dir / "src/data/dataset_work/COMBINED/Leave_13_out"
+        self.combined_wheelposer_am_path = self.root_dir / "src/data/dataset_work/COMBINED/WheelPoser_AM"
+
         # self.processed_wheelposer_4 = self.root_dir / "src/data/dataset_work/4Joints/PROCESSED"
         # self.processed_amass_nn_ready_4 = self.root_dir / "src/data/dataset_work/4Joints/COMBINED/AMASS"        
         # self.processed_wheelposer_nn_ready_4 = self.root_dir / "src/data/dataset_work/4Joints/COMBINED/WheelPoser"

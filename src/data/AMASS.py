@@ -31,7 +31,6 @@ class AMASS(Dataset):
         if self.train == "train":
             data_files = [x.name for x in self.config.processed_wheelposer_amass_nn_ready_4.iterdir()]
         else:
-            # data_files = ["wheelposer_am_smooth_final_test.pt"]
             data_files = ['wheelposer_wu_fullset.pt']
 
         imu = []
@@ -60,9 +59,7 @@ class AMASS(Dataset):
                     acc = glb_acc
                     ori = glb_ori
                 elif normalize == True:
-                    # TODO: Add this another option
                     # make acc relative to the last imu always
-
                     acc = torch.cat((glb_acc[:, :num_joints-1] - glb_acc[:, num_joints-1:], glb_acc[:, num_joints-1:]), dim=1).bmm(glb_ori[:, -1]) / self.config.acc_scale
                     ori = torch.cat((glb_ori[:, num_joints-1:].transpose(2, 3).matmul(glb_ori[:, :num_joints-1]), glb_ori[:, num_joints-1:]), dim=1)
                 else:
@@ -111,11 +108,6 @@ class AMASS(Dataset):
 
                 if self.config.use_vel_loss == True:
                     fvel_full = fvel_full.flatten(1)
-
-                # clip the data
-                # 25 is the data sampling rate
-
-                # window_length = self.config.max_sample_len * 25 // 60
 
                 window_length = self.config.max_sample_len
                 if "Transformer" in self.config.model:
@@ -169,7 +161,6 @@ class AMASS(Dataset):
                     glb_joint_rotations, _ = self.body_model.forward_kinematics(_pose)
                     root_relative_joint_rotations = torch.matmul(glb_joint_rotations[:, 0].unsqueeze(1).transpose(2,3), glb_joint_rotations)
                     _output = math.rotation_matrix_to_r6d(root_relative_joint_rotations).reshape(-1, 24, 6)[:, joint_set.reduced_upper_body].reshape(-1, 6 * len(joint_set.reduced_upper_body))
-                    # _output = math.rotation_matrix_to_r6d(_pose).reshape(-1, 24, 6)[:, joint_set.reduced_upper_body].reshape(-1, 6 * len(joint_set.reduced_upper_body))
                 else:
                     _output = math.rotation_matrix_to_r6d(_pose).reshape(-1, 24, 6)[:, self.config.pred_joints_set].reshape(-1, 6 * len(self.config.pred_joints_set))
             else:
