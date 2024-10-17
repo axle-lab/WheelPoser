@@ -62,7 +62,6 @@ from src.utils import *
 from pygame.time import Clock
 import pygame
 from src.models.LSTMs.Three_Stage_Global.Three_Stage_Global_WheelPoser_Wrapper import Three_Stage_Global_WheelPoser
-
 import pathlib
 temp = pathlib.PosixPath
 pathlib.PosixPath = pathlib.WindowsPath
@@ -70,9 +69,6 @@ pathlib.PosixPath = pathlib.WindowsPath
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print(device)
-# inertial_poser = TransPoseNet(num_past_frame=20,num_future_frame=5).to(device)
-
-
 
 running = False
 start_recording = False
@@ -92,8 +88,6 @@ end_time = None
 #D4:22:CD:00:50:DE LeftLeg
 #D4:22:CD:00:53:AA Head
 
-
-
 class IMUSet:
     def __init__(self, buffer_len = 26):
 
@@ -109,8 +103,6 @@ class IMUSet:
         self._buffer_len = buffer_len
         self.clock = Clock()
 
-
-    
     def establish_connection(self):
         if not xdpcHandler.initialize():
             xdpcHandler.cleanup()
@@ -187,10 +179,8 @@ class IMUSet:
                             self._pelvis_buffer.append(quat)
                         elif device.deviceTagName() == 'LeftArm':
                             self._leftArm_buffer.append(quat)
-                        # elif device.deviceTagName() == 'RightArm':
-                        elif device.deviceTagName() == 'LeftLeg':
+                        elif device.deviceTagName() == 'RightArm':
                             self._rightArm_buffer.append(quat)
-                #if len(self._head_buffer)>=1 and len(self._pelvis_buffer)>=1 and len(self._leftArm_buffer)>=1 and len(self._rightArm_buffer)>=1 and len(self._leftLeg_buffer)>=1:
                 self._packet_count+=1
                 if self._is_reading:
                     full_measurement = np.concatenate((self._leftArm_buffer[0], self._rightArm_buffer[0],self._head_buffer[0],self._pelvis_buffer[0])).reshape((4,7))
@@ -278,11 +268,10 @@ if __name__ == '__main__':
 
 
     model_names = ["IMU2Leaf_WheelPoser_AMASS", "Leaf2Full_WheelPoser_AMASS", "Full2Pose_WheelPoser_AMASS"]
-    experiment_names = "TransPose_Style_500"
-    leave_one_out = 'am_only'
+    experiment_names = "3_Stage_500"
 
     # %%
-    best_ckpts = get_checkpoints(model_names, experiment_names, leave_one_out=leave_one_out)
+    best_ckpts = get_checkpoints(model_names, experiment_names)
     print(best_ckpts)
 
     # %%
@@ -303,10 +292,10 @@ if __name__ == '__main__':
     # load model
 
     model_names = ["IMU2Leaf_WheelPoser_WHEELPOSER", "Leaf2Full_WheelPoser_WHEELPOSER", "Full2Pose_WheelPoser_WHEELPOSER"]
-    experiment_names = "TransPose_Style_500"
+    experiment_names = "3_Stage_500"
 
     # %%
-    best_ckpts = get_checkpoints(model_names, experiment_names, leave_one_out=leave_one_out)
+    best_ckpts = get_checkpoints(model_names, experiment_names)
     print(best_ckpts)
 
     WHEELPOSER_IMU2Leaf_config = Config(experiment=experiment_names, model=model_names[0], project_root_dir=".", joints_set=joint_set.WheelPoser, pred_joints_set=joint_set.upper_body,
@@ -325,9 +314,7 @@ if __name__ == '__main__':
     shared_input_config = WHEELPOSER_IMU2Leaf_config
     shared_output_config = WHEELPOSER_Full2Pose_config
 
-
-
-    wheelposer = TransPose_Global_WheelPoser(config=shared_input_config, imu2leaf=WHEELPOSER_IMU2Leaf_model, leaf2full=WHEELPOSER_Leaf2Full_model, full2pose=WHEELPOSER_Full2Pose_model, num_past_frame=num_past_frame, num_future_frame=num_future_frame, physics=physics).to(shared_input_config.device)
+    wheelposer = Three_Stage_Global_WheelPoser(config=shared_input_config, imu2leaf=WHEELPOSER_IMU2Leaf_model, leaf2full=WHEELPOSER_Leaf2Full_model, full2pose=WHEELPOSER_Full2Pose_model, num_past_frame=num_past_frame, num_future_frame=num_future_frame, physics=physics).to(shared_input_config.device)
     print(f"the actual device is {shared_input_config.device}")
     print(f"wheelposerimu2leaf device is {WHEELPOSER_IMU2Leaf_model.device}")
     print(f"wheelposerleaf2full device is {WHEELPOSER_Leaf2Full_model.device}")
@@ -346,10 +333,7 @@ if __name__ == '__main__':
     for i in range (imu_count):
         print(quaternion_to_axis_angle(oris[i]))
 
-
     input('Put imu leftarm aligned with your body reference frame (x = Left, y = Up, z = Forward) and then press any key.')
-    # listener = keyboard.Listener(on_press=on_press)
-    # listener.start()
     for i in range(3, 0, -1):
         print('\rHold the imu stably and be ready. The celebration will begin after %d seconds.' % i, end='')
         time.sleep(1)
@@ -408,7 +392,6 @@ if __name__ == '__main__':
     pygame.init()
     while running:
         start_time = time.time()
-        # print(imu_set.clock.get_fps(), clock.get_fps())
         ori_raw, acc_raw = imu_set.get_current_buffer()   # [1, 4, 4], get measurements in running fps
         # move to device
         ori_raw = ori_raw.to(shared_input_config.device)
@@ -425,12 +408,10 @@ if __name__ == '__main__':
             # normalization
             acc = torch.cat((acc_cal[:, :3] - acc_cal[:, 3:], acc_cal[:, 3:]), dim=1).bmm(ori_cal[:, -1]) / WHEELPOSER_Full2Pose_config.acc_scale
             ori = torch.cat((ori_cal[:, 3:].transpose(2, 3).matmul(ori_cal[:, :3]), ori_cal[:, 3:]), dim=1)
-            # data_nn = torch.cat((acc.view(-1, 12), ori.view(-1, 36)), dim=1).to(shared_input_config.device)
             data_nn = torch.cat((acc.view(-1, 12), ori.view(-1, 36)), dim=1)
 
             # prediction
             pose = wheelposer.forward_online(data_nn)
-            # pose = rotation_matrix_to_axis_angle(pred_pose).view(72)
             tran = torch.tensor([0,-0.4,-0.1055]).to(device)
 
 
@@ -454,8 +435,4 @@ if __name__ == '__main__':
 
             if unity_visualizer:
                 conn.send(s.encode('utf8'))  # I use unity3d to read pose and translation for visualization here
-            # clock.tick(60)
-            # print(timestamp)
             print(f"FPS: {1/(time.time()-start_time)}")
-            # clock.tick(60)
-            # print(s)
