@@ -1,7 +1,8 @@
 r"""
     Preprocess AMASS and DIP dataset
 """
-
+import sys
+sys.path.append('.')
 import torch
 import os
 import numpy as np
@@ -270,7 +271,7 @@ def process_wheelposer(smooth_n = 4, split = 'fullset_am'):
 if __name__ == '__main__':
     process_amass()
     # process_dipimu()
-    process_wheelposer(split='am_fullset')
-    process_wheelposer(split='wu_13')
-    process_wheelposer(split='wu_14')
-    process_wheelposer(split='wu_fullset')
+    # process_wheelposer(split='am_fullset')
+    # process_wheelposer(split='wu_13')
+    # process_wheelposer(split='wu_14')
+    # process_wheelposer(split='wu_fullset')

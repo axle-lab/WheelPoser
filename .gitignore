@@ -165,4 +165,4 @@ cython_debug/
 src/data/dataset_raw/
 src/data/dataset_work/
 checkpoints/
-src/data/smpl/models/basicmodel_m_lbs_10_207_0_v1.0.0.pkl
+src/smpl/models/basicmodel_m_lbs_10_207_0_v1.0.0.pkl
