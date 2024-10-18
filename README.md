@@ -60,7 +60,9 @@ We use Unity3D to visualize real-time pose estimation. Download a sample Unity s
 ### Run the Live Demo
 Run `3.1_3_stage_live_demo.py` and open the Unity3D visualizer to view the pose estimation results in real time.
 
-
+## Acknowledgements
+We would like to thank the following contributors that our code is based on:
+[TransPose](https://github.com/Xinyu-Yi/TransPose), [PIP](https://github.com/Xinyu-Yi/PIP/tree/main), [IMUPoser](https://github.com/FIGLAB/IMUPoser/tree/main), and [TIP](https://github.com/jyf588/transformer-inertial-poser).
 
 ## Citation
 
