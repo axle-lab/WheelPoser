@@ -9,7 +9,7 @@ Open-source code, model, and dataset for our ASSETS 2024 paper "WheelPoser: Spar
 ## Installation
 
 ### Python Environment and Dependencies
-This code was developed in `python 3.7.12`. For dependencies, please install the latest `pytorch chumpy vctoolkit open3d pybullet qpsolvers cvxopt pytorch-lightning`.
+This code was developed in `python 3.7.12`. For dependencies, please install the latest `pytorch chumpy vctoolkit open3d pybullet qpsolvers cvxopt pytorch-lightning opencv-python tqdm`.
 
 *Installing `pytorch` with CUDA is highly recommended.
 
