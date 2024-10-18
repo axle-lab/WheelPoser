@@ -31,8 +31,8 @@ If you want to use the physics optimization module, please also compile and inst
 3. Please note, we are working on making the WheelPoser-IMU dataset available for download directly from the AMASS website. The public download link will be updated here once it becomes available.
 
 ### Prepare Training and Fine-Tuning Dataset
-1. Run `1.0_preprocess_all.py` to generate synthetic IMU data for the AMASS dataset and extract ground truth IMU data for the WheelPoser-IMU dataset.
-2. Run `1.1_combine_for_nn.py` to organize the synthetic IMU data, ground truth IMU data, and pose ground truth data for model training and fine-tuning.
+1. Run `1.1 preprocess_all.py` to generate synthetic IMU data for the AMASS dataset and extract ground truth IMU data for the WheelPoser-IMU dataset.
+2. Run `1.2 combine_for_nn.py` to organize the synthetic IMU data, ground truth IMU data, and pose ground truth data for model training and fine-tuning.
 
 ### Model Training and Fine-Tuning
 Execute `scripts/run_all_training.py` to train and fine-tune the model.
@@ -40,8 +40,8 @@ Execute `scripts/run_all_training.py` to train and fine-tune the model.
 ### Evaluation
 We provide scripts for leave-one-subject-out evaluation of the trained model, supporting both offline and online (real-time) evaluations. While the paper reports online evaluation results, offline evaluation scripts can produce smoother, more accurate motion predictions for non-real-time applications.
 
-1. Use the scripts in `2.2.1 Offline Evaluation` for offline leave-one-subject-out evaluation.
-2. Use the scripts in `2.2.2 Online Evaluation` for online leave-one-subject-out evaluation, with options to include or exclude the physics optimization module depending on your application needs.
+1. Use the scripts in `2.2.2 Offline Evaluation` for offline leave-one-subject-out evaluation.
+2. Use the scripts in `2.2.3 Online Evaluation` for online leave-one-subject-out evaluation, with options to include or exclude the physics optimization module depending on your application needs.
 
 ## Live Demo
 
@@ -58,7 +58,7 @@ We use 4 Movella DOT IMUs for the live demo:
 We use Unity3D to visualize real-time pose estimation. Download a sample Unity scene file [here](). 
 
 ### Run the Live Demo
-Run `3.1_3_stage_live_demo.py` and open the Unity3D visualizer to view the pose estimation results in real time.
+Run `3.1 3_stage_live_demo.py` and open the Unity3D visualizer to view the pose estimation results in real time.
 
 ## Acknowledgements
 We would like to thank the following contributors that our code is based on:
