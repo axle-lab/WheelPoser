@@ -21,13 +21,13 @@ def run_python_scripts_in_directory(directory):
 
 # # # Example usage
 
-directory = 'scripts/2. Experiments/2.2 WheelPoser_3_Stage/2.2.0 Training/2.2.0.0 IMU2Leaf'  # Replace with the path to your directory
+directory = 'scripts/2. Experiments/2.2 WheelPoser_3_Stage/2.2.1 Training/2.2.1.1 IMU2Leaf'  # Replace with the path to your directory
 run_python_scripts_in_directory(directory)
 
-directory = 'scripts/2. Experiments/2.2 WheelPoser_3_Stage/2.2.0 Training/2.2.0.1 Leaf2Full'  # Replace with the path to your directory
+directory = 'scripts/2. Experiments/2.2 WheelPoser_3_Stage/2.2.1 Training/2.2.1.1 Leaf2Full'  # Replace with the path to your directory
 run_python_scripts_in_directory(directory)
 
-directory = 'scripts/2. Experiments/2.2 WheelPoser_3_Stage/2.2.0 Training/2.2.0.2 Full2Pose'  # Replace with the path to your directory
+directory = 'scripts/2. Experiments/2.2 WheelPoser_3_Stage/2.2.1 Training/2.2.1.3 Full2Pose'  # Replace with the path to your directory
 run_python_scripts_in_directory(directory)
 
 print("Training done!")

@@ -29,9 +29,9 @@ class AMASS(Dataset):
             return vel
 
         if self.train == "train":
-            data_files = [x.name for x in self.config.processed_wheelposer_amass_nn_ready_4.iterdir()]
+            data_files = [x.name for x in self.config.combined_amass_path.iterdir()]
         else:
-            data_files = ['wheelposer_wu_fullset.pt']
+            data_files = ['wu_fullset.pt']
 
         imu = []
         leaf_joint_pos = []
@@ -43,9 +43,9 @@ class AMASS(Dataset):
         num_joints = len(self.config.joints_set)
         for fname in data_files:
             if self.train == "train":
-                fdata = torch.load(self.config.processed_wheelposer_amass_nn_ready_4 / fname)
+                fdata = torch.load(self.config.combined_amass_path / fname)
             else:
-                fdata = torch.load(self.config.processed_wheelposer_nn_ready_4 / fname)
+                fdata = torch.load(self.config.combined_wheelposer_path / fname)
 
             for i in range(len(fdata["acc"])):
                 # inputs

@@ -32,27 +32,33 @@ class WHEELPOSER(Dataset):
 
         if self.train == "train":
             if self.config.exp_setup == "leave_14_out":
-                data_files = ['wheelposer_am_fullset.pt', 'wheelposer_wu_13.pt']
+                data_files = ['am_fullset.pt', 'wu_13.pt']
                 for i in range(self.config.upsample_copies - 1):
-                    data_files.append('wheelposer_wu_13.pt')
+                    data_files.append('wu_13.pt')
 
             elif self.config.exp_setup == "leave_13_out":
-                data_files = ['wheelposer_am_fullset.pt', 'wheelposer_wu_14.pt']
+                data_files = ['am_fullset.pt', 'wu_14.pt']
                 for i in range(self.config.upsample_copies - 1):
-                    data_files.append('wheelposer_wu_14.pt')
+                    data_files.append('wu_14.pt')
 
             elif self.config.exp_setup == "am_only":
-                data_files = ['wheelposer_am_fullset.pt']
+                data_files = ['am_fullset.pt']
+            elif self.config.exp_setup == "fullset":
+                data_files = ['wu_fullset.pt', 'am_fullset.pt']
+                for i in range(self.config.upsample_copies - 1):
+                    data_files.append('wu_fullset.pt')
             else:
                 print("No experiment setup specified")
                 return
         else:
             if self.config.exp_setup == "leave_14_out":
-                data_files = ['wheelposer_wu_14.pt']
+                data_files = ['wu_14.pt']
             elif self.config.exp_setup == "leave_13_out":
-                data_files = ['wheelposer_wu_13.pt']
+                data_files = ['wu_13.pt']
             elif self.config.exp_setup == "am_only":
-                data_files = ['wheelposer_wu_fullset.pt']
+                data_files = ['wu_fullset.pt']
+            elif self.config.exp_setup == "fullset":
+                data_files = ['wu_fullset.pt']
             else:
                 print("No experiment setup specified")
                 return

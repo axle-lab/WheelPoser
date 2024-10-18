@@ -17,7 +17,7 @@ class Full2Pose_WheelPoser_Global(pl.LightningModule):
         self.batch_size = config.batch_size
         self.n_pose_output = n_output
 
-        self.dip_model = RNN(n_input = n_input + joint_set.n_wheelpose_full*3, n_output = joint_set.n_upper_body*6 if config.r6d == True else joint_set.n_upper_body*9, n_hidden = 128, bidirectional = True)
+        self.dip_model = RNN(n_input = n_input + joint_set.n_wheelposer_full*3, n_output = joint_set.n_upper_body*6 if config.r6d == True else joint_set.n_upper_body*9, n_hidden = 128, bidirectional = True)
         if config.loss_type == "l1":
             self.loss = nn.L1Loss()
         elif config.loss_type == "weighted_mse":
