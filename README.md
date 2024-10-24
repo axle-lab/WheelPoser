@@ -26,7 +26,7 @@ If you want to use the physics optimization module, please also compile and inst
 2. Extract the downloaded datasets and place them in the `src/data/dataset_raw/AMASS` directory.
 
 ### Prepare the WheelPoser-IMU Dataset
-1. To obtain the dataset, please email [yunzhil@cs.cmu.edu](mailto:yunzhil@cs.cmu.edu) to request the download link.
+1. To obtain the dataset, please fill out this [Google Form](https://forms.gle/GZQMAja1yCba45c58).
 2. Extract the dataset and place it in the `src/data/dataset_raw/WheelPoser` directory.
 3. Please note, we are working on making the WheelPoser-IMU dataset available for download directly from the AMASS website. The public download link will be updated here once it becomes available.
 
@@ -46,7 +46,7 @@ We provide scripts for leave-one-subject-out evaluation of the trained model, su
 ## Live Demo
 
 ### Prepare Pre-trained Network Weights
-- Download the network weights from [here]().
+- Download the network weights from [here](https://cmu.box.com/s/0tl4nup6kpxawanb7rnmsv62dfyxt7dv).
 - Place the downloaded files in the `checkpoints` folder.
 
 ### Set Up IMU Sensors
@@ -55,7 +55,7 @@ We use 4 Movella DOT IMUs for the live demo:
 2. Perform a heading reset for all 4 IMU sensors before each use to improve pose estimation accuracy.
 
 ### Set Up Unity3D Visualizer
-We use Unity3D to visualize real-time pose estimation. Download a sample Unity scene file [here](). 
+We use Unity3D to visualize real-time pose estimation. Download a sample Unity scene file [here](https://cmu.box.com/s/b2sndinnkv9fjzq2nptj4hr77m2rgmcn). 
 
 ### Run the Live Demo
 Run `3.1 3_stage_live_demo.py` and open the Unity3D visualizer to view the pose estimation results in real time.
@@ -69,7 +69,19 @@ We would like to thank the following contributors that our code is based on:
 If you find the project helpful, please consider citing us:
 
 ```
- 
+@inproceedings{10.1145/3663548.3675638,
+author = {Li, Yunzhi and Mollyn, Vimal and Yuan, Kuang and Carrington, Patrick},
+title = {WheelPoser: Sparse-IMU Based Body Pose Estimation for Wheelchair Users},
+year = {2024},
+isbn = {9798400706776},
+publisher = {Association for Computing Machinery},
+address = {New York, NY, USA},
+url = {https://doi.org/10.1145/3663548.3675638},
+doi = {10.1145/3663548.3675638},
+booktitle = {Proceedings of the 26th International ACM SIGACCESS Conference on Computers and Accessibility},
+keywords = {Inertial Measurement Units, Motion Capture, Pose Estimation, Real-time, Wheelchair Users},
+series = {ASSETS '24}
+}
 ```
 
 
