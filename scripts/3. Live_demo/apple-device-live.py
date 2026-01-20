@@ -25,6 +25,15 @@ import torch
 from collections import deque
 import struct
 
+# ============ WINDOWS COMPATIBILITY ============
+import platform
+import pathlib
+
+# Fix for Windows path compatibility with models saved on POSIX systems
+if platform.system() == 'Windows':
+    temp = pathlib.PosixPath
+    pathlib.PosixPath = pathlib.WindowsPath
+
 # ======================= Configuration =======================
 
 HOST = "0.0.0.0"
