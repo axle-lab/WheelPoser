@@ -478,6 +478,130 @@ def input_thread():
 
 # ======================= Inference loop =======================
 
+# def run_inference(wheelposer, config):
+#     """Run the main inference loop (Phase 2)"""
+#     global inference_mode, is_recording, record_buffer, record_session_start, start_recording
+    
+#     from src.articulate.math import quaternion_to_rotation_matrix
+#     import pygame
+    
+#     inference_mode = True
+    
+#     # Setup Unity (optional)
+#     conn = None
+#     if UNITY_VISUALIZER:
+#         print("\nSetting up Unity visualizer...")
+#         server_for_unity = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+#         server_for_unity.bind((SERVER_UNITY_IP, SERVER_UNITY_PORT))
+#         server_for_unity.listen(5)
+#         print(f'Waiting for Unity to connect on {SERVER_UNITY_IP}:{SERVER_UNITY_PORT}...')
+#         print('(Press Ctrl+C to skip Unity and continue)')
+        
+#         try:
+#             server_for_unity.settimeout(10.0)  # 10 second timeout
+#             conn, addr_unity = server_for_unity.accept()
+#             print(f'✓ Unity connected from {addr_unity}')
+#         except socket.timeout:
+#             print('⚠ Unity connection timeout - continuing without visualization')
+#             conn = None
+#         except KeyboardInterrupt:
+#             print('\n⚠ Skipping Unity - continuing without visualization')
+#             conn = None
+    
+#     print("\n" + "="*80)
+#     print("LIVE INFERENCE MODE")
+#     print("="*80)
+#     print("Controls: [r] start recording | [s] stop recording | [q] quit")
+#     print()
+    
+#     # Main inference loop
+#     pygame.init()
+#     last_status_time = time.time()
+    
+#     try:
+#         while inference_mode and running:
+#             loop_start = time.time()
+            
+#             # Get latest IMU measurements
+#             ori_raw, acc_raw = get_current_imu_measurement()
+            
+#             if ori_raw is None or acc_raw is None:
+#                 time.sleep(0.01)
+#                 continue
+            
+#             # Move to device
+#             ori_raw = ori_raw.to(device)
+#             acc_raw = acc_raw.to(device)
+            
+#             # Calibrate
+#             ori_raw = quaternion_to_rotation_matrix(ori_raw).view(1, 4, 3, 3)
+#             acc_cal = (smpl2imu.matmul(acc_raw.view(-1, 4, 3, 1)) - acc_offsets).view(1, 4, 3)
+#             ori_cal = smpl2imu.matmul(ori_raw).matmul(device2bone)
+#             imu_recording = torch.cat((acc_cal.view(-1, 12), ori_cal.view(-1, 36)), dim=1)
+            
+#             # Normalize for model
+#             acc = torch.cat((acc_cal[:, :3] - acc_cal[:, 3:], acc_cal[:, 3:]), dim=1).bmm(ori_cal[:, -1]) / config.acc_scale
+#             ori = torch.cat((ori_cal[:, 3:].transpose(2, 3).matmul(ori_cal[:, :3]), ori_cal[:, 3:]), dim=1)
+#             data_nn = torch.cat((acc.view(-1, 12), ori.view(-1, 36)), dim=1)
+            
+#             # Run inference
+#             pose = wheelposer.forward_online(data_nn)
+#             tran = torch.tensor([0, -0.4, -0.1055]).to(device)
+            
+#             # Update FPS
+#             inference_fps.update(time.time())
+            
+#             # Recording
+#             if not is_recording and start_recording:
+#                 record_buffer = imu_recording.view(1, -1)
+#                 is_recording = True
+#                 record_session_start = time.time()
+#             elif is_recording and start_recording:
+#                 record_buffer = torch.cat([record_buffer, imu_recording.view(1, -1)], dim=0)
+#             elif is_recording and not start_recording:
+#                 timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+#                 save_path = Path('src/data/imu_recordings')
+#                 save_path.mkdir(exist_ok=True, parents=True)
+#                 torch.save(record_buffer, save_path / f'r{timestamp}.pt')
+#                 recording_fps = record_buffer.size(0) / (time.time() - record_session_start)
+#                 print(f'\n[REC] Saved {record_buffer.size(0)} frames at {recording_fps:.1f} FPS to {save_path / f"r{timestamp}.pt"}')
+#                 is_recording = False
+            
+#             # Send to Unity
+#             if conn:
+#                 s = ','.join(['%g' % v for v in pose]) + '#' + \
+#                     ','.join(['%g' % v for v in tran]) + '$'
+#                 try:
+#                     conn.send(s.encode('utf8'))
+#                 except:
+#                     pass
+            
+#             # Status print
+#             now = time.time()
+#             if now - last_status_time > STATUS_INTERVAL:
+#                 # Build compact status line
+#                 status_parts = []
+#                 for stream in ["pocket_watch", "frame_watch", "pocket_headphone", "pocket_phone"]:
+#                     short_name = stream.replace("pocket_", "P-").replace("frame_", "F-").replace("phone", "Ph").replace("watch", "W").replace("headphone", "H")
+#                     fps_val = fps_meters[stream].get_fps(now)
+#                     status_parts.append(f"{short_name}:{fps_val:4.1f}")
+                
+#                 stream_status = " | ".join(status_parts)
+#                 inf_fps = inference_fps.get_fps(now)
+#                 rec_status = "●REC" if is_recording else "○---"
+#                 print(f"\r[{rec_status}] {stream_status} | Inf:{inf_fps:5.1f} FPS", 
+#                       end="", flush=True)
+#                 last_status_time = now
+    
+#     except KeyboardInterrupt:
+#         print("\n\nInference interrupted by user")
+#     finally:
+#         if conn:
+#             try:
+#                 conn.close()
+#             except:
+#                 pass
+
 def run_inference(wheelposer, config):
     """Run the main inference loop (Phase 2)"""
     global inference_mode, is_recording, record_buffer, record_session_start, start_recording
@@ -498,7 +622,7 @@ def run_inference(wheelposer, config):
         print('(Press Ctrl+C to skip Unity and continue)')
         
         try:
-            server_for_unity.settimeout(10.0)  # 10 second timeout
+            server_for_unity.settimeout(10.0)
             conn, addr_unity = server_for_unity.accept()
             print(f'✓ Unity connected from {addr_unity}')
         except socket.timeout:
@@ -514,16 +638,31 @@ def run_inference(wheelposer, config):
     print("Controls: [r] start recording | [s] stop recording | [q] quit")
     print()
     
+    # Timing diagnostics
+    timing_samples = {
+        'data_acquisition': [],
+        'calibration': [],
+        'normalization': [],
+        'inference': [],
+        'recording': [],
+        'unity_send': [],
+        'total_loop': []
+    }
+    diagnostic_mode = True  # Set to False to disable timing printouts
+    
     # Main inference loop
     pygame.init()
     last_status_time = time.time()
+    loop_count = 0
     
     try:
         while inference_mode and running:
-            loop_start = time.time()
+            t_loop_start = time.time()
             
             # Get latest IMU measurements
+            t0 = time.time()
             ori_raw, acc_raw = get_current_imu_measurement()
+            t1 = time.time()
             
             if ori_raw is None or acc_raw is None:
                 time.sleep(0.01)
@@ -534,24 +673,31 @@ def run_inference(wheelposer, config):
             acc_raw = acc_raw.to(device)
             
             # Calibrate
+            t2 = time.time()
             ori_raw = quaternion_to_rotation_matrix(ori_raw).view(1, 4, 3, 3)
             acc_cal = (smpl2imu.matmul(acc_raw.view(-1, 4, 3, 1)) - acc_offsets).view(1, 4, 3)
             ori_cal = smpl2imu.matmul(ori_raw).matmul(device2bone)
             imu_recording = torch.cat((acc_cal.view(-1, 12), ori_cal.view(-1, 36)), dim=1)
+            t3 = time.time()
             
             # Normalize for model
+            t4 = time.time()
             acc = torch.cat((acc_cal[:, :3] - acc_cal[:, 3:], acc_cal[:, 3:]), dim=1).bmm(ori_cal[:, -1]) / config.acc_scale
             ori = torch.cat((ori_cal[:, 3:].transpose(2, 3).matmul(ori_cal[:, :3]), ori_cal[:, 3:]), dim=1)
             data_nn = torch.cat((acc.view(-1, 12), ori.view(-1, 36)), dim=1)
+            t5 = time.time()
             
             # Run inference
+            t6 = time.time()
             pose = wheelposer.forward_online(data_nn)
             tran = torch.tensor([0, -0.4, -0.1055]).to(device)
+            t7 = time.time()
             
             # Update FPS
             inference_fps.update(time.time())
             
             # Recording
+            t8 = time.time()
             if not is_recording and start_recording:
                 record_buffer = imu_recording.view(1, -1)
                 is_recording = True
@@ -566,8 +712,10 @@ def run_inference(wheelposer, config):
                 recording_fps = record_buffer.size(0) / (time.time() - record_session_start)
                 print(f'\n[REC] Saved {record_buffer.size(0)} frames at {recording_fps:.1f} FPS to {save_path / f"r{timestamp}.pt"}')
                 is_recording = False
+            t9 = time.time()
             
             # Send to Unity
+            t10 = time.time()
             if conn:
                 s = ','.join(['%g' % v for v in pose]) + '#' + \
                     ','.join(['%g' % v for v in tran]) + '$'
@@ -575,6 +723,26 @@ def run_inference(wheelposer, config):
                     conn.send(s.encode('utf8'))
                 except:
                     pass
+            t11 = time.time()
+            
+            t_loop_end = time.time()
+            
+            # Collect timing stats
+            if diagnostic_mode:
+                timing_samples['data_acquisition'].append((t1 - t0) * 1000)
+                timing_samples['calibration'].append((t3 - t2) * 1000)
+                timing_samples['normalization'].append((t5 - t4) * 1000)
+                timing_samples['inference'].append((t7 - t6) * 1000)
+                timing_samples['recording'].append((t9 - t8) * 1000)
+                timing_samples['unity_send'].append((t11 - t10) * 1000)
+                timing_samples['total_loop'].append((t_loop_end - t_loop_start) * 1000)
+                
+                # Keep only last 100 samples
+                for key in timing_samples:
+                    if len(timing_samples[key]) > 100:
+                        timing_samples[key] = timing_samples[key][-100:]
+            
+            loop_count += 1
             
             # Status print
             now = time.time()
@@ -589,7 +757,15 @@ def run_inference(wheelposer, config):
                 stream_status = " | ".join(status_parts)
                 inf_fps = inference_fps.get_fps(now)
                 rec_status = "●REC" if is_recording else "○---"
-                print(f"\r[{rec_status}] {stream_status} | Inf:{inf_fps:5.1f} FPS", 
+                
+                # Add timing breakdown if diagnostic mode
+                if diagnostic_mode and loop_count > 10:
+                    avg_times = {k: np.mean(v) for k, v in timing_samples.items() if len(v) > 0}
+                    timing_str = f" | Loop:{avg_times.get('total_loop', 0):.1f}ms [Acq:{avg_times.get('data_acquisition', 0):.1f} Cal:{avg_times.get('calibration', 0):.1f} Norm:{avg_times.get('normalization', 0):.1f} Inf:{avg_times.get('inference', 0):.1f}]"
+                else:
+                    timing_str = ""
+                
+                print(f"\r[{rec_status}] {stream_status} | Inf:{inf_fps:5.1f} FPS{timing_str}", 
                       end="", flush=True)
                 last_status_time = now
     
