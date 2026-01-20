@@ -13,6 +13,7 @@ Device Setup:
 - pocket_headphone -> Head (IMU index 2)
 """
 import sys
+
 sys.path.append('.')
 from pathlib import Path
 import socket
@@ -73,7 +74,14 @@ verification_mode = True  # Phase 1: just monitor streams
 inference_mode = False     # Phase 2: run model inference
 start_recording = False
 
-device = torch.device('mps' if torch.backends.mps.is_available() else 'cpu')
+def get_default_device():
+    if torch.cuda.is_available():
+        return torch.device('cuda:0')
+    if torch.backends.mps.is_available():
+        return torch.device('mps')
+    return torch.device('cpu')
+
+device = get_default_device()
 
 # IMU data buffers (per stream)
 latest_imu_data = {}  # stream_key -> {'quat': [qx,qy,qz,qw], 'acc': [ax,ay,az], 'timestamp': float}
