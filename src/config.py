@@ -62,6 +62,13 @@ class joint_set:
     n_wheelposer_full = len(wheelposer_full)
     n_upper_body = len(upper_body)
 
+def get_default_device():
+    if torch.cuda.is_available():
+        return torch.device('cuda:0')
+    if torch.backends.mps.is_available():
+        return torch.device('mps')
+    return torch.device('cpu')
+
 
 
 class Config:
@@ -98,8 +105,7 @@ class Config:
             else:
                 self.device = torch.device(f'cuda:{device}')
         else:
-            self.device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
-
+            self.device = get_default_device()
         self.build_paths()
 
         self.loss_type = loss_type

@@ -25,10 +25,8 @@ import numpy as np
 #     normalize_angle
 
 def get_checkpoints(model_name: list, experiment_names: str, leave_one_out=None):
-    path_to_checkpoints = Path("checkpoints")
-    
+    path_to_checkpoints = Path("checkpoints")    
     checkpoints = [x.name for x in path_to_checkpoints.iterdir() if experiment_names in x.name]
-
     best_ckpts = {}
 
 

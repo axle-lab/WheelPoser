@@ -34,7 +34,7 @@
 import sys
 sys.path.append('.')
 
-from src.dot_sdk.xdpchandler import *
+# from src.dot_sdk.xdpchandler import *
 
 from concurrent.futures import thread
 from http import server
@@ -49,7 +49,6 @@ import matplotlib.pyplot as plt
 import argparse
 import pickle as pkl
 import pytorch_lightning as pl
-from pathlib import Path
 from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint
 from pytorch_lightning.loggers import WandbLogger
 from pytorch_lightning import seed_everything
@@ -62,10 +61,6 @@ from src.utils import *
 from pygame.time import Clock
 import pygame
 from src.models.LSTMs.Three_Stage_Global.Three_Stage_Global_WheelPoser_Wrapper import Three_Stage_Global_WheelPoser
-import pathlib
-temp = pathlib.PosixPath
-pathlib.PosixPath = pathlib.WindowsPath
-
 
 device = torch.device('mps' if torch.backends.mps.is_available() else 'cpu')
 print(device)
@@ -77,7 +72,7 @@ unity_visualizer = True
 server_unity_ip = '127.0.0.1'
 server_unity_port = 8888
 
-xdpcHandler = XdpcHandler()
+# xdpcHandler = XdpcHandler()
 imu_count = 4
 
 start_time = None
@@ -209,9 +204,6 @@ class IMUSet:
             print('cleared the buffer')
             self._is_reading = True
 
-
-
-    
     def stop_reading(self):
         if self._read_thread is not None:
             self._is_reading = False
@@ -268,10 +260,11 @@ if __name__ == '__main__':
 
 
     model_names = ["IMU2Leaf_WheelPoser_AMASS", "Leaf2Full_WheelPoser_AMASS", "Full2Pose_WheelPoser_AMASS"]
-    experiment_names = "3_Stage_500"
+    experiment_names = "TransPose_Style_500"
+    leave_one_out = 'am_only'
 
     # %%
-    best_ckpts = get_checkpoints(model_names, experiment_names)
+    best_ckpts = get_checkpoints(model_names, experiment_names, leave_one_out=leave_one_out)
     print(best_ckpts)
 
     # %%
@@ -292,10 +285,10 @@ if __name__ == '__main__':
     # load model
 
     model_names = ["IMU2Leaf_WheelPoser_WHEELPOSER", "Leaf2Full_WheelPoser_WHEELPOSER", "Full2Pose_WheelPoser_WHEELPOSER"]
-    experiment_names = "3_Stage_500"
-
+    experiment_names = "TransPose_Style_500"
+    leave_one_out = 'am_only'
     # %%
-    best_ckpts = get_checkpoints(model_names, experiment_names)
+    best_ckpts = get_checkpoints(model_names, experiment_names, leave_one_out=leave_one_out)
     print(best_ckpts)
 
     WHEELPOSER_IMU2Leaf_config = Config(experiment=experiment_names, model=model_names[0], project_root_dir=".", joints_set=joint_set.WheelPoser, pred_joints_set=joint_set.upper_body,
@@ -375,7 +368,6 @@ if __name__ == '__main__':
         print ('Got connection from', addr_unity )
 
     running = True
-    clock = Clock()
     old_timestamp = 0
     is_recording = False
     record_buffer = None
