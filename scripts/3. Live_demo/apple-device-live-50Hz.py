@@ -184,6 +184,43 @@ def parse_udp_payload(payload: bytes):
 
 # ======================= UDP receiver thread =======================
 
+# def udp_receiver_thread(sockets):
+#     """Continuously receive UDP packets and update timestamped buffers"""
+#     global running, latest_airpods_timestamp
+    
+#     empty = []
+#     while running:
+#         readable, _, _ = select.select(sockets, empty, empty, 0.1)
+        
+#         for s in readable:
+#             try:
+#                 data, _ = s.recvfrom(CHUNK)
+#             except Exception:
+#                 continue
+            
+#             events = parse_udp_payload(data)
+#             for stream_key, unix_ts, sensor_ts, gravity, free_acc, quat, gyro in events:
+#                 now = time.time()
+                
+#                 # Update FPS for this stream
+#                 if stream_key in fps_meters:
+#                     fps_meters[stream_key].update(now)
+                
+#                 # Convert quaternion from [qx, qy, qz, qw] to [qw, qx, qy, qz]
+#                 quat_wxyz = [quat[3], quat[0], quat[1], quat[2]]
+                
+#                 # Total acceleration = gravity + free_acc
+#                 total_acc = [gravity[i] + free_acc[i] for i in range(3)]
+                
+#                 with data_lock:
+#                     # Add timestamped sample to buffer
+#                     imu_buffers[stream_key].append((unix_ts, quat_wxyz, total_acc))
+                    
+#                     # If AirPods (trigger sensor), signal inference
+#                     if stream_key == 'pocket_headphone':
+#                         latest_airpods_timestamp = unix_ts
+#                         airpods_event.set()
+
 def udp_receiver_thread(sockets):
     """Continuously receive UDP packets and update timestamped buffers"""
     global running, latest_airpods_timestamp
@@ -200,11 +237,11 @@ def udp_receiver_thread(sockets):
             
             events = parse_udp_payload(data)
             for stream_key, unix_ts, sensor_ts, gravity, free_acc, quat, gyro in events:
-                now = time.time()
-                
+                recv_ts = time.time()
+
                 # Update FPS for this stream
                 if stream_key in fps_meters:
-                    fps_meters[stream_key].update(now)
+                    fps_meters[stream_key].update(recv_ts)
                 
                 # Convert quaternion from [qx, qy, qz, qw] to [qw, qx, qy, qz]
                 quat_wxyz = [quat[3], quat[0], quat[1], quat[2]]
@@ -213,12 +250,12 @@ def udp_receiver_thread(sockets):
                 total_acc = [gravity[i] + free_acc[i] for i in range(3)]
                 
                 with data_lock:
-                    # Add timestamped sample to buffer
-                    imu_buffers[stream_key].append((unix_ts, quat_wxyz, total_acc))
+                    # Store receiver-time timestamps for synchronization
+                    imu_buffers[stream_key].append((recv_ts, quat_wxyz, total_acc))
                     
                     # If AirPods (trigger sensor), signal inference
                     if stream_key == 'pocket_headphone':
-                        latest_airpods_timestamp = unix_ts
+                        latest_airpods_timestamp = recv_ts
                         airpods_event.set()
 
 # ======================= Stream verification display =======================
