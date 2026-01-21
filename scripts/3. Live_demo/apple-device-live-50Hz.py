@@ -67,7 +67,7 @@ STREAM_DISPLAY_NAMES = {
 }
 
 # Unity visualizer
-UNITY_VISUALIZER = False
+UNITY_VISUALIZER = True
 SERVER_UNITY_IP = '127.0.0.1'
 SERVER_UNITY_PORT = 8888
 
@@ -590,7 +590,7 @@ def run_inference(wheelposer, config):
         print('(Press Ctrl+C to skip Unity and continue)')
         
         try:
-            server_for_unity.settimeout(10.0)
+            server_for_unity.settimeout(60.0)
             conn, addr_unity = server_for_unity.accept()
             print(f'✓ Unity connected from {addr_unity}')
         except socket.timeout:
