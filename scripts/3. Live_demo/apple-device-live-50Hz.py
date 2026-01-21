@@ -462,6 +462,63 @@ def perform_calibration(wait_seconds=3):
     
     return smpl2imu_val, device2bone_val, acc_offsets_val
 
+def perform_calibration_event_driven(wait_seconds=3):
+    """
+    Perform calibration using event-driven collection (triggered by AirPods).
+    This ensures temporal synchronization.
+    """
+    global latest_airpods_timestamp
+    
+    print(f'\nCollecting {wait_seconds} seconds of calibration data...')
+    print('(Event-driven @ ~50Hz, temporally synchronized)')
+    
+    quat_samples = []
+    acc_samples = []
+    start = time.time()
+    sample_count = 0
+    
+    while time.time() - start < wait_seconds:
+        # Wait for AirPods trigger (just like inference!)
+        triggered = airpods_event.wait(timeout=0.050)  # 50ms timeout
+        
+        if not triggered:
+            continue  # No trigger, try again
+        
+        airpods_event.clear()
+        target_time = latest_airpods_timestamp
+        
+        # Use the same synchronized fetcher as inference
+        ori, acc, match_errors = get_synchronized_imu_measurement_nearest(target_time)
+        
+        if ori is not None and acc is not None:
+            quat_samples.append(ori)
+            acc_samples.append(acc)
+            sample_count += 1
+            
+            # Show progress
+            if sample_count % 10 == 0:
+                print(f"\rCollected {sample_count} samples...", end='', flush=True)
+    
+    print(f"\nCollected {sample_count} synchronized samples")
+    
+    if len(quat_samples) == 0:
+        raise RuntimeError("No IMU data received during calibration!")
+    
+    # Average the samples
+    oris = torch.cat(quat_samples, dim=0).mean(dim=0)  # [4, 4]
+    accs = torch.cat(acc_samples, dim=0).mean(dim=0)   # [4, 3]
+    
+    # Import needed functions
+    from src.articulate.math import quaternion_to_rotation_matrix
+    
+    # Compute calibration matrices
+    smpl2imu_val = quaternion_to_rotation_matrix(oris[0]).view(3, 3).t()
+    oris_mat = quaternion_to_rotation_matrix(oris)
+    device2bone_val = smpl2imu_val.matmul(oris_mat).transpose(1, 2).matmul(torch.eye(3))
+    acc_offsets_val = smpl2imu_val.matmul(accs.unsqueeze(-1))
+    
+    return smpl2imu_val, device2bone_val, acc_offsets_val
+
 # ======================= Model loading =======================
 
 def load_wheelposer_models():
@@ -942,7 +999,7 @@ def main():
             time.sleep(1)
         
         print('\nCollecting reference orientation...')
-        smpl2imu_temp, _, _ = perform_calibration(wait_seconds=3)
+        smpl2imu_temp, _, _ = perform_calibration_event_driven(wait_seconds=3)
         print("✓ Reference frame established")
         
         input('\n[Step 2/2] Wear all 4 IMUs and stand in T-pose. Press Enter when ready.')
@@ -951,7 +1008,7 @@ def main():
             time.sleep(1)
         
         print('\nCollecting T-pose calibration...')
-        smpl2imu, device2bone, acc_offsets = perform_calibration(wait_seconds=3)
+        smpl2imu, device2bone, acc_offsets = perform_calibration_event_driven(wait_seconds=3)
         
         # Move to device
         smpl2imu = smpl2imu.to(device)
