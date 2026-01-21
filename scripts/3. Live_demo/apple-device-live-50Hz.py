@@ -93,7 +93,7 @@ data_lock = threading.Lock()
 
 # Event-driven trigger
 latest_airpods_timestamp = None
-airpods_event = threading.Event()
+trigger_queue = deque(maxlen=50)
 
 # Calibration matrices (will be set during calibration)
 smpl2imu = None
@@ -184,43 +184,6 @@ def parse_udp_payload(payload: bytes):
 
 # ======================= UDP receiver thread =======================
 
-# def udp_receiver_thread(sockets):
-#     """Continuously receive UDP packets and update timestamped buffers"""
-#     global running, latest_airpods_timestamp
-    
-#     empty = []
-#     while running:
-#         readable, _, _ = select.select(sockets, empty, empty, 0.1)
-        
-#         for s in readable:
-#             try:
-#                 data, _ = s.recvfrom(CHUNK)
-#             except Exception:
-#                 continue
-            
-#             events = parse_udp_payload(data)
-#             for stream_key, unix_ts, sensor_ts, gravity, free_acc, quat, gyro in events:
-#                 now = time.time()
-                
-#                 # Update FPS for this stream
-#                 if stream_key in fps_meters:
-#                     fps_meters[stream_key].update(now)
-                
-#                 # Convert quaternion from [qx, qy, qz, qw] to [qw, qx, qy, qz]
-#                 quat_wxyz = [quat[3], quat[0], quat[1], quat[2]]
-                
-#                 # Total acceleration = gravity + free_acc
-#                 total_acc = [gravity[i] + free_acc[i] for i in range(3)]
-                
-#                 with data_lock:
-#                     # Add timestamped sample to buffer
-#                     imu_buffers[stream_key].append((unix_ts, quat_wxyz, total_acc))
-                    
-#                     # If AirPods (trigger sensor), signal inference
-#                     if stream_key == 'pocket_headphone':
-#                         latest_airpods_timestamp = unix_ts
-#                         airpods_event.set()
-
 def udp_receiver_thread(sockets):
     """Continuously receive UDP packets and update timestamped buffers"""
     global running, latest_airpods_timestamp
@@ -237,11 +200,11 @@ def udp_receiver_thread(sockets):
             
             events = parse_udp_payload(data)
             for stream_key, unix_ts, sensor_ts, gravity, free_acc, quat, gyro in events:
-                recv_ts = time.time()
-
+                now = time.time()
+                
                 # Update FPS for this stream
                 if stream_key in fps_meters:
-                    fps_meters[stream_key].update(recv_ts)
+                    fps_meters[stream_key].update(now)
                 
                 # Convert quaternion from [qx, qy, qz, qw] to [qw, qx, qy, qz]
                 quat_wxyz = [quat[3], quat[0], quat[1], quat[2]]
@@ -250,13 +213,12 @@ def udp_receiver_thread(sockets):
                 total_acc = [gravity[i] + free_acc[i] for i in range(3)]
                 
                 with data_lock:
-                    # Store receiver-time timestamps for synchronization
-                    imu_buffers[stream_key].append((recv_ts, quat_wxyz, total_acc))
+                    # Add timestamped sample to buffer
+                    imu_buffers[stream_key].append((unix_ts, quat_wxyz, total_acc))
                     
                     # If AirPods (trigger sensor), signal inference
                     if stream_key == 'pocket_headphone':
-                        latest_airpods_timestamp = recv_ts
-                        airpods_event.set()
+                        trigger_queue.append(unix_ts)
 
 # ======================= Stream verification display =======================
 
@@ -372,53 +334,30 @@ def find_nearest_sample(buffer_deque, target_time, max_age_ms=50):
     return best_sample
 
 def get_synchronized_imu_measurement_nearest(target_time):
-    """
-    Get synchronized IMU measurements using nearest-neighbor matching.
-    
-    Args:
-        target_time: target timestamp (typically from AirPods)
-    
-    Returns:
-        (ori_tensor, acc_tensor, match_errors) in WheelPoser order or (None, None, None) if incomplete
-        match_errors: dict of stream -> time_diff_ms for diagnostics
-    """
     with data_lock:
-        # Build arrays in WheelPoser order
-        quats = [None] * 4
-        accs = [None] * 4
+        quats, accs = [None] * 4, [None] * 4
         match_errors = {}
         
         for stream in ACTIVE_STREAMS:
             imu_idx = STREAM_TO_IMU_INDEX[stream]
             
-            # For AirPods (the trigger), use exact latest sample
-            if stream == 'pocket_headphone':
-                if len(imu_buffers[stream]) == 0:
-                    return None, None, None
-                # Use most recent (should match target_time exactly)
-                _, quat, acc = imu_buffers[stream][-1]
-                quats[imu_idx] = quat
-                accs[imu_idx] = acc
-                match_errors[stream] = 0.0  # Exact match
-            else:
-                # For other sensors, find nearest match
-                result = find_nearest_sample(imu_buffers[stream], target_time, max_age_ms=50)
-                if result is None:
-                    return None, None, None  # Missing or too old
+            # Try strict matching first (100ms window)
+            result = find_nearest_sample(imu_buffers[stream], target_time, max_age_ms=100)
+            
+            if result:
                 quat, acc, diff = result
-                quats[imu_idx] = quat
-                accs[imu_idx] = acc
-                match_errors[stream] = diff * 1000  # Convert to ms
-        
-        # Verify no None values
-        if None in quats or None in accs:
-            return None, None, None
-        
-        # Convert to torch tensors
-        ori_tensor = torch.tensor([quats], dtype=torch.float32)  # [1, 4, 4]
-        acc_tensor = torch.tensor([accs], dtype=torch.float32)   # [1, 4, 3]
-        
-        return ori_tensor, acc_tensor, match_errors
+                match_errors[stream] = diff * 1000
+            elif len(imu_buffers[stream]) > 0:
+                # FALLBACK: Matching failed, use the absolute latest data available
+                _, quat, acc = imu_buffers[stream][-1]
+                match_errors[stream] = -1 # Flag for "unsynced/late"
+            else:
+                return None, None, None # Truly no data received yet
+            
+            quats[imu_idx] = quat
+            accs[imu_idx] = acc
+            
+        return torch.tensor([quats]), torch.tensor([accs]), match_errors
 
 # ======================= Calibration =======================
 
@@ -496,63 +435,6 @@ def perform_calibration(wait_seconds=3):
     
     # Compute acceleration offsets
     acc_offsets_val = smpl2imu_val.matmul(accs.unsqueeze(-1))  # [4, 3, 1]
-    
-    return smpl2imu_val, device2bone_val, acc_offsets_val
-
-def perform_calibration_event_driven(wait_seconds=3):
-    """
-    Perform calibration using event-driven collection (triggered by AirPods).
-    This ensures temporal synchronization.
-    """
-    global latest_airpods_timestamp
-    
-    print(f'\nCollecting {wait_seconds} seconds of calibration data...')
-    print('(Event-driven @ ~50Hz, temporally synchronized)')
-    
-    quat_samples = []
-    acc_samples = []
-    start = time.time()
-    sample_count = 0
-    
-    while time.time() - start < wait_seconds:
-        # Wait for AirPods trigger (just like inference!)
-        triggered = airpods_event.wait(timeout=0.050)  # 50ms timeout
-        
-        if not triggered:
-            continue  # No trigger, try again
-        
-        airpods_event.clear()
-        target_time = latest_airpods_timestamp
-        
-        # Use the same synchronized fetcher as inference
-        ori, acc, match_errors = get_synchronized_imu_measurement_nearest(target_time)
-        
-        if ori is not None and acc is not None:
-            quat_samples.append(ori)
-            acc_samples.append(acc)
-            sample_count += 1
-            
-            # Show progress
-            if sample_count % 10 == 0:
-                print(f"\rCollected {sample_count} samples...", end='', flush=True)
-    
-    print(f"\nCollected {sample_count} synchronized samples")
-    
-    if len(quat_samples) == 0:
-        raise RuntimeError("No IMU data received during calibration!")
-    
-    # Average the samples
-    oris = torch.cat(quat_samples, dim=0).mean(dim=0)  # [4, 4]
-    accs = torch.cat(acc_samples, dim=0).mean(dim=0)   # [4, 3]
-    
-    # Import needed functions
-    from src.articulate.math import quaternion_to_rotation_matrix
-    
-    # Compute calibration matrices
-    smpl2imu_val = quaternion_to_rotation_matrix(oris[0]).view(3, 3).t()
-    oris_mat = quaternion_to_rotation_matrix(oris)
-    device2bone_val = smpl2imu_val.matmul(oris_mat).transpose(1, 2).matmul(torch.eye(3))
-    acc_offsets_val = smpl2imu_val.matmul(accs.unsqueeze(-1))
     
     return smpl2imu_val, device2bone_val, acc_offsets_val
 
@@ -756,35 +638,36 @@ def run_inference(wheelposer, config):
     
     try:
         while inference_mode and running:
+            # 1. NEW TRIGGER LOGIC: Check the queue instead of waiting on a single event
+            # This handles bursty network traffic where multiple packets arrive at once
+            if not trigger_queue:
+                time.sleep(0.001)  # Minimal sleep to keep CPU usage low
+                continue
+                
             t_loop_start = time.time()
             
-            # Wait for AirPods packet (trigger)
+            # Pop the oldest timestamp from the trigger queue
             t0 = time.time()
-            triggered = airpods_event.wait(timeout=0.030)  # 30ms timeout = ~33Hz minimum
+            target_time = trigger_queue.popleft()
             t1 = time.time()
             
-            if not triggered:
-                frames_skipped += 1
-                continue  # No AirPods packet, skip this iteration
-            
-            airpods_event.clear()
-            target_time = latest_airpods_timestamp
-            
-            # Get synchronized measurements using nearest-neighbor
+            # 2. Get measurements using the Nearest Neighbor Sync function
+            # This uses nearest-neighbor but falls back to 'latest' if sync is slightly out of bounds
             t2 = time.time()
             ori_raw, acc_raw, match_errors = get_synchronized_imu_measurement_nearest(target_time)
             t3 = time.time()
             
+            # Only skip if a sensor is completely missing (not even a fallback sample available)
             if ori_raw is None or acc_raw is None:
                 frames_skipped += 1
-                continue  # Missing data
+                continue 
             
-            # Track matching quality (for diagnostics)
+            # Track matching quality (Preserved your diagnostics)
             if diagnostic_mode and match_errors:
                 for stream, error_ms in match_errors.items():
                     if stream in match_quality:
+                        # Note: -1.0 indicates a fallback 'latest' sample was used
                         match_quality[stream].append(error_ms)
-                        # Keep only last 100 samples
                         if len(match_quality[stream]) > 100:
                             match_quality[stream] = match_quality[stream][-100:]
             
@@ -794,7 +677,7 @@ def run_inference(wheelposer, config):
             ori_raw = ori_raw.to(device)
             acc_raw = acc_raw.to(device)
             
-            # Calibrate
+            # Calibrate (Preserved your math)
             t4 = time.time()
             ori_raw = quaternion_to_rotation_matrix(ori_raw).view(1, 4, 3, 3)
             acc_cal = (smpl2imu.matmul(acc_raw.view(-1, 4, 3, 1)) - acc_offsets).view(1, 4, 3)
@@ -811,7 +694,7 @@ def run_inference(wheelposer, config):
             
             # Run inference
             t8 = time.time()
-            with torch.no_grad():  # Add no_grad for faster inference
+            with torch.no_grad():
                 pose = wheelposer.forward_online(data_nn)
             tran = torch.tensor([0, -0.4, -0.1055]).to(device)
             t9 = time.time()
@@ -819,7 +702,7 @@ def run_inference(wheelposer, config):
             # Update FPS
             inference_fps.update(time.time())
             
-            # Recording
+            # Recording (Preserved your recording logic)
             if not is_recording and start_recording:
                 record_buffer = imu_recording.view(1, -1)
                 is_recording = True
@@ -832,7 +715,7 @@ def run_inference(wheelposer, config):
                 save_path.mkdir(exist_ok=True, parents=True)
                 torch.save(record_buffer, save_path / f'r{timestamp}.pt')
                 recording_fps = record_buffer.size(0) / (time.time() - record_session_start)
-                print(f'\n[REC] Saved {record_buffer.size(0)} frames at {recording_fps:.1f} FPS to {save_path / f"r{timestamp}.pt"}')
+                print(f'\n[REC] Saved {record_buffer.size(0)} frames at {recording_fps:.1f} FPS')
                 is_recording = False
             
             # Send to Unity
@@ -846,7 +729,7 @@ def run_inference(wheelposer, config):
             
             t_loop_end = time.time()
             
-            # Collect timing stats
+            # Collect timing stats (Preserved your timing diagnostics)
             if diagnostic_mode:
                 timing_samples['wait_trigger'].append((t1 - t0) * 1000)
                 timing_samples['data_fetch'].append((t3 - t2) * 1000)
@@ -855,15 +738,13 @@ def run_inference(wheelposer, config):
                 timing_samples['inference'].append((t9 - t8) * 1000)
                 timing_samples['total_loop'].append((t_loop_end - t_loop_start) * 1000)
                 
-                # Keep only last 100 samples
                 for key in timing_samples:
                     if len(timing_samples[key]) > 100:
                         timing_samples[key] = timing_samples[key][-100:]
             
-            # Status print
+            # Status print (Preserved your UI)
             now = time.time()
             if now - last_status_time > STATUS_INTERVAL:
-                # Build compact status line
                 status_parts = []
                 for stream in ["pocket_watch", "frame_watch", "pocket_headphone", "pocket_phone"]:
                     short_name = stream.replace("pocket_", "P-").replace("frame_", "F-").replace("phone", "Ph").replace("watch", "W").replace("headphone", "H")
@@ -874,25 +755,19 @@ def run_inference(wheelposer, config):
                 inf_fps = inference_fps.get_fps(now)
                 rec_status = "●REC" if is_recording else "○---"
                 
-                # Add timing breakdown and match quality
                 if diagnostic_mode and frames_processed > 10:
                     avg_times = {k: np.mean(v) for k, v in timing_samples.items() if len(v) > 0}
-                    
-                    # Compute average match quality
                     avg_match = {stream: np.mean(match_quality[stream]) if len(match_quality[stream]) > 0 else 0 
                                  for stream in match_quality}
                     
                     timing_str = f" | Loop:{avg_times.get('total_loop', 0):.1f}ms [Fetch:{avg_times.get('data_fetch', 0):.1f} Inf:{avg_times.get('inference', 0):.1f}]"
                     match_str = f" | Match: PW:{avg_match.get('pocket_watch', 0):.1f}ms FW:{avg_match.get('frame_watch', 0):.1f}ms PP:{avg_match.get('pocket_phone', 0):.1f}ms"
                     
-                    # Show skip rate
                     total_frames = frames_processed + frames_skipped
                     success_rate = (frames_processed / total_frames * 100) if total_frames > 0 else 0
                     skip_str = f" | Skip:{frames_skipped}({success_rate:.0f}%)"
                 else:
-                    timing_str = ""
-                    match_str = ""
-                    skip_str = ""
+                    timing_str = match_str = skip_str = ""
                 
                 print(f"\r[{rec_status}] {stream_status} | Inf:{inf_fps:5.1f} FPS{timing_str}{match_str}{skip_str}", 
                       end="", flush=True)
@@ -1036,7 +911,7 @@ def main():
             time.sleep(1)
         
         print('\nCollecting reference orientation...')
-        smpl2imu_temp, _, _ = perform_calibration_event_driven(wait_seconds=3)
+        smpl2imu_temp, _, _ = perform_calibration(wait_seconds=3)
         print("✓ Reference frame established")
         
         input('\n[Step 2/2] Wear all 4 IMUs and stand in T-pose. Press Enter when ready.')
@@ -1045,7 +920,7 @@ def main():
             time.sleep(1)
         
         print('\nCollecting T-pose calibration...')
-        smpl2imu, device2bone, acc_offsets = perform_calibration_event_driven(wait_seconds=3)
+        smpl2imu, device2bone, acc_offsets = perform_calibration(wait_seconds=3)
         
         # Move to device
         smpl2imu = smpl2imu.to(device)
