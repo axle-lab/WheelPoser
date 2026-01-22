@@ -30,7 +30,6 @@ import threading
 from datetime import datetime
 import torch
 from collections import deque
-import struct
 
 # ============ WINDOWS COMPATIBILITY ============
 import platform
@@ -68,7 +67,7 @@ STREAM_DISPLAY_NAMES = {
 }
 
 # Unity visualizer
-UNITY_VISUALIZER = False
+UNITY_VISUALIZER = True
 SERVER_UNITY_IP = '127.0.0.1'
 SERVER_UNITY_PORT = 8888
 
@@ -101,51 +100,21 @@ class SynchronizedIMUBuffers:
         self._acc_buffer = []   # List of [4, 3] arrays (4 IMUs x 3 acc components)
         
         # Individual stream buffers for incoming data
-        self._stream_buffers = {stream: deque(maxlen=10) for stream in ACTIVE_STREAMS}
+        # Using maxlen=50 to handle sensor rates up to ~70Hz with some buffer
+        self._stream_buffers = {stream: deque(maxlen=50) for stream in ACTIVE_STREAMS}
         self._lock = threading.Lock()
         
         # Reading state
         self._is_reading = False
         self._packet_count = 0
-        self._last_packet_count = 0
         
     def add_sample(self, stream_key, quat, acc):
         """Add a new sample from UDP receiver"""
         with self._lock:
             self._stream_buffers[stream_key].append((quat, acc))
-            
-    def _try_consume_synchronized_sample(self):
-        """
-        Try to consume one sample from each stream to create a synchronized measurement.
-        Similar to the old script's approach where all IMUs are read together.
-        """
-        # Check if all streams have at least one sample
-        if not all(len(self._stream_buffers[s]) > 0 for s in ACTIVE_STREAMS):
-            return False
-        
-        # Consume oldest sample from each stream (FIFO)
-        quats = [None] * 4
-        accs = [None] * 4
-        
-        for stream in ACTIVE_STREAMS:
-            imu_idx = STREAM_TO_IMU_INDEX[stream]
-            quat, acc = self._stream_buffers[stream].popleft()
-            quats[imu_idx] = quat
-            accs[imu_idx] = acc
-        
-        # Create synchronized measurement
-        full_measurement = np.array([quats, accs])  # [2, 4, components]
-        
-        # Add to rolling buffer (similar to old script's truncation)
-        truncate = int(len(self._quat_buffer) == self._buffer_len)
-        self._quat_buffer = self._quat_buffer[truncate:] + [np.array(quats, dtype=float)]
-        self._acc_buffer = self._acc_buffer[truncate:] + [np.array(accs, dtype=float)]
-        
-        self._packet_count += 1
-        return True
         
     def start_reading(self):
-        """Start consuming samples into synchronized buffers"""
+        """Start consuming samples into synchronized buffers (for calibration)"""
         with self._lock:
             self._is_reading = True
             self._quat_buffer = []
@@ -162,18 +131,42 @@ class SynchronizedIMUBuffers:
             self._quat_buffer = []
             self._acc_buffer = []
             
-    def update(self):
+    def update(self, max_samples: int = 5):
         """
-        Try to consume synchronized samples.
-        Should be called regularly (e.g., in a loop or timer).
+        Try to consume synchronized samples, up to max_samples per call.
+        This prevents lock starvation and keeps inference responsive.
         """
-        with self._lock:
-            if not self._is_reading:
-                return
+        consumed = 0
+        while consumed < max_samples:
+            with self._lock:
+                # Check if all streams have data
+                if not all(len(self._stream_buffers[s]) > 0 for s in ACTIVE_STREAMS):
+                    break
                 
-            # Try to consume as many synchronized samples as possible
-            while self._try_consume_synchronized_sample():
-                pass
+                # Consume one synchronized sample
+                quats = [None] * 4
+                accs = [None] * 4
+                
+                for stream in ACTIVE_STREAMS:
+                    imu_idx = STREAM_TO_IMU_INDEX[stream]
+                    quat, acc = self._stream_buffers[stream].popleft()
+                    quats[imu_idx] = quat
+                    accs[imu_idx] = acc
+                
+                self._packet_count += 1
+                
+                if self._is_reading:
+                    quat_array = np.array(quats, dtype=float)
+                    acc_array = np.array(accs, dtype=float)
+                    
+                    self._quat_buffer.append(quat_array)
+                    self._acc_buffer.append(acc_array)
+                    
+                    if len(self._quat_buffer) > self._buffer_len:
+                        self._quat_buffer = self._quat_buffer[-self._buffer_len:]
+                        self._acc_buffer = self._acc_buffer[-self._buffer_len:]
+            
+            consumed += 1
                 
     def get_current_buffer(self):
         """
@@ -188,17 +181,38 @@ class SynchronizedIMUBuffers:
             a = torch.tensor(np.array(self._acc_buffer), dtype=torch.float32)
             return q, a
             
-    def has_new_data(self):
-        """Check if new data has been consumed since last check"""
-        with self._lock:
-            has_new = self._packet_count != self._last_packet_count
-            self._last_packet_count = self._packet_count
-            return has_new
-            
     def get_packet_count(self):
         """Get current packet count"""
         with self._lock:
             return self._packet_count
+        
+    def try_get_one_sample(self):
+        """
+        Try to consume exactly ONE synchronized sample from all streams.
+        Returns (quat_tensor, acc_tensor) or None if not all streams have data.
+        """
+        with self._lock:
+            # Check if all streams have at least one sample
+            if not all(len(self._stream_buffers[s]) > 0 for s in ACTIVE_STREAMS):
+                return None
+            
+            # Consume oldest sample from each stream (FIFO)
+            quats = [None] * 4
+            accs = [None] * 4
+            
+            for stream in ACTIVE_STREAMS:
+                imu_idx = STREAM_TO_IMU_INDEX[stream]
+                quat, acc = self._stream_buffers[stream].popleft()
+                quats[imu_idx] = quat
+                accs[imu_idx] = acc
+            
+            self._packet_count += 1
+            
+            # Convert to tensors
+            quat_array = np.array(quats, dtype=np.float32)  # [4, 4]
+            acc_array = np.array(accs, dtype=np.float32)    # [4, 3]
+            
+            return torch.tensor(quat_array), torch.tensor(acc_array)
 
 # Global buffer instance
 imu_buffers = SynchronizedIMUBuffers(buffer_len=1)
@@ -327,14 +341,6 @@ def udp_receiver_thread(sockets):
                 # Add to synchronized buffer system
                 imu_buffers.add_sample(stream_key, quat_wxyz, free_acceleration)
 
-def buffer_update_thread():
-    """Background thread to consume samples into synchronized buffers"""
-    global running
-    
-    while running:
-        imu_buffers.update()
-        time.sleep(0.001)  # Check frequently for new data
-
 # ======================= Stream verification display =======================
 
 def display_stream_status():
@@ -387,8 +393,25 @@ def display_stream_status():
             
             # Summary
             lines.append("-"*80)
+            
+            # Consume some samples to keep sync rate meaningful (without hogging lock)
+            imu_buffers.update(max_samples=10)
+            
             packet_count = imu_buffers.get_packet_count()
-            lines.append(f"Synchronized packets consumed: {packet_count}")
+            
+            # Calculate synchronized packet rate
+            if not hasattr(display_stream_status, 'last_packet_count'):
+                display_stream_status.last_packet_count = 0
+                display_stream_status.last_check_time = now
+            
+            time_since_last = now - display_stream_status.last_check_time
+            packets_since_last = packet_count - display_stream_status.last_packet_count
+            sync_rate = packets_since_last / time_since_last if time_since_last > 0 else 0
+            
+            display_stream_status.last_packet_count = packet_count
+            display_stream_status.last_check_time = now
+            
+            lines.append(f"Synchronized packets consumed: {packet_count} ({sync_rate:.1f} Hz)")
             
             if all_active:
                 lines.append("✓ ALL DEVICES ACTIVE - Ready to proceed!")
@@ -435,8 +458,11 @@ def get_mean_measurement_of_n_second(num_seconds=3, buffer_len=150):
     imu_buffers.clear_buffer()
     imu_buffers.start_reading()
     
-    # Wait for collection
-    time.sleep(num_seconds)
+    # Active consumption loop during calibration
+    t0 = time.time()
+    while time.time() - t0 < num_seconds:
+        imu_buffers.update(max_samples=50)  # Consume up to 50 samples per iteration
+        time.sleep(0.01)  # 100Hz polling
     
     # Stop reading
     imu_buffers.stop_reading()
@@ -678,7 +704,6 @@ def run_inference(wheelposer, config):
     global inference_mode, is_recording, record_buffer, record_session_start, start_recording
     
     from src.articulate.math import quaternion_to_rotation_matrix
-    import pygame
     
     inference_mode = True
     
@@ -687,6 +712,7 @@ def run_inference(wheelposer, config):
     if UNITY_VISUALIZER:
         print("\nSetting up Unity visualizer...")
         server_for_unity = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        server_for_unity.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         server_for_unity.bind((SERVER_UNITY_IP, SERVER_UNITY_PORT))
         server_for_unity.listen(5)
         print(f'Waiting for Unity to connect on {SERVER_UNITY_IP}:{SERVER_UNITY_PORT}...')
@@ -696,6 +722,7 @@ def run_inference(wheelposer, config):
             server_for_unity.settimeout(60.0)
             conn, addr_unity = server_for_unity.accept()
             print(f'✓ Unity connected from {addr_unity}')
+            conn.setblocking(False)
         except socket.timeout:
             print('⚠ Unity connection timeout - continuing without visualization')
             conn = None
@@ -715,9 +742,6 @@ def run_inference(wheelposer, config):
     
     # Statistics
     frames_processed = 0
-    old_packet_count = 0
-    
-    pygame.init()
     last_status_time = time.time()
     
     # Warmup
@@ -727,35 +751,31 @@ def run_inference(wheelposer, config):
     
     try:
         while inference_mode and running:
-            # Check if new data is available (similar to old script's packet_count check)
-            current_packet_count = imu_buffers.get_packet_count()
+            # Fast polling - 2.5ms sleep for ~400Hz poll rate
+            time.sleep(0.0025)
             
-            if current_packet_count == old_packet_count:
-                # No new data, wait a bit
-                time.sleep(0.001)
+            # Try to consume ONE synchronized sample at a time
+            sample = imu_buffers.try_get_one_sample()
+            
+            if sample is None:
+                # No synchronized data available yet
                 continue
             
-            old_packet_count = current_packet_count
-            
-            # Get current buffer (similar to old script's get_current_buffer)
-            ori_raw, acc_raw = imu_buffers.get_current_buffer()
-            
-            if ori_raw.size(0) == 0 or acc_raw.size(0) == 0:
-                continue
-            
+            ori_raw, acc_raw = sample
             frames_processed += 1
             
             # Move to device
             ori_raw = ori_raw.to(device)
             acc_raw = acc_raw.to(device)
             
+            # ...existing calibration and inference code...
             # Calibrate (same as old script)
             ori_raw = quaternion_to_rotation_matrix(ori_raw).view(1, 4, 3, 3)
             acc_cal = (smpl2imu.matmul(acc_raw.view(-1, 4, 3, 1)) - acc_offsets).view(1, 4, 3)
             ori_cal = smpl2imu.matmul(ori_raw).matmul(device2bone)
             imu_recording = torch.cat((acc_cal.view(-1, 12), ori_cal.view(-1, 36)), dim=1)
             
-            # Normalize for model (same as old script)
+            # Normalize for model
             acc = torch.cat((acc_cal[:, :3] - acc_cal[:, 3:], acc_cal[:, 3:]), dim=1).bmm(ori_cal[:, -1]) / config.acc_scale
             ori = torch.cat((ori_cal[:, 3:].transpose(2, 3).matmul(ori_cal[:, :3]), ori_cal[:, 3:]), dim=1)
             data_nn = torch.cat((acc.view(-1, 12), ori.view(-1, 36)), dim=1)
@@ -768,7 +788,7 @@ def run_inference(wheelposer, config):
             # Update FPS
             inference_fps.update(time.time())
             
-            # Recording (same as old script)
+            # Recording
             if not is_recording and start_recording:
                 record_buffer = imu_recording.view(1, -1)
                 is_recording = True
@@ -790,7 +810,7 @@ def run_inference(wheelposer, config):
                     ','.join(['%g' % v for v in tran]) + '$'
                 try:
                     conn.send(s.encode('utf8'))
-                except:
+                except (BlockingIOError, OSError):
                     pass
             
             # Status print
@@ -821,14 +841,12 @@ def run_inference(wheelposer, config):
         
         imu_buffers.stop_reading()
         
-        # Print final statistics
         if frames_processed > 0:
             print(f"\n\n{'='*80}")
             print("FINAL STATISTICS")
             print('='*80)
             print(f"Frames processed: {frames_processed}")
             print('='*80)
-
 # ======================= Main =======================
 
 def main():
@@ -875,10 +893,6 @@ def main():
     verification_mode = True
     udp_thread = threading.Thread(target=udp_receiver_thread, args=(sockets,), daemon=True)
     udp_thread.start()
-    
-    # Start buffer update thread
-    buffer_thread = threading.Thread(target=buffer_update_thread, daemon=True)
-    buffer_thread.start()
     
     # Start keyboard input thread
     input_thread_obj = threading.Thread(target=input_thread, daemon=True)
