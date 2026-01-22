@@ -2,20 +2,21 @@
 # -*- coding: utf-8 -*-
 
 """
-Two-phase WheelPoser Live Inference with UDP Data Pipeline
+Two-phase WheelPoser Live Inference with UDP Data Pipeline - 50Hz Synchronized
 Phase 1: Verify UDP streams and connection quality
 Phase 2: Load models, calibrate, and run inference
 
-Device Setup:
+Device Setup (ALL at 50Hz):
 - pocket_phone -> Pelvis (IMU index 3)
 - pocket_watch -> Left Wrist (IMU index 0)
 - frame_watch -> Right Wrist (IMU index 1)
 - pocket_headphone -> Head (IMU index 2)
 
-Event-Driven Architecture:
-- Inference triggered by AirPods (50 Hz)
-- Nearest-neighbor timestamp matching for 100 Hz sensors
-- No interpolation needed
+Synchronized Architecture:
+- All sensors at 50 Hz
+- Fixed-length buffers (buffer_len=1 for online inference)
+- Synchronized consumption similar to old IMUSet approach
+- Uses FREE ACCELERATION (gravity-removed) matching Movella DOT behavior
 """
 import sys
 
@@ -51,7 +52,7 @@ STATUS_INTERVAL = 1.0
 STREAM_TO_IMU_INDEX = {
     "pocket_watch": 0,      # Left Wrist
     "frame_watch": 1,       # Right Wrist
-    "pocket_headphone": 2,  # Head (AirPods - trigger sensor)
+    "pocket_headphone": 2,  # Head
     "pocket_phone": 3,      # Pelvis
 }
 
@@ -87,13 +88,120 @@ def get_default_device():
 
 device = get_default_device()
 
-# IMU data buffers (timestamped deques for temporal matching)
-imu_buffers = {stream: deque(maxlen=20) for stream in ACTIVE_STREAMS}  # (timestamp, quat, acc)
-data_lock = threading.Lock()
+# ======================= Synchronized Buffer System =======================
 
-# Event-driven trigger
-latest_airpods_timestamp = None
-trigger_queue = deque(maxlen=50)
+class SynchronizedIMUBuffers:
+    """
+    Manages synchronized IMU buffers similar to the old IMUSet class.
+    All sensors run at 50Hz, so we can use simple synchronized buffers.
+    """
+    def __init__(self, buffer_len=1):
+        self._buffer_len = buffer_len
+        self._quat_buffer = []  # List of [4, 4] arrays (4 IMUs x 4 quat components)
+        self._acc_buffer = []   # List of [4, 3] arrays (4 IMUs x 3 acc components)
+        
+        # Individual stream buffers for incoming data
+        self._stream_buffers = {stream: deque(maxlen=10) for stream in ACTIVE_STREAMS}
+        self._lock = threading.Lock()
+        
+        # Reading state
+        self._is_reading = False
+        self._packet_count = 0
+        self._last_packet_count = 0
+        
+    def add_sample(self, stream_key, quat, acc):
+        """Add a new sample from UDP receiver"""
+        with self._lock:
+            self._stream_buffers[stream_key].append((quat, acc))
+            
+    def _try_consume_synchronized_sample(self):
+        """
+        Try to consume one sample from each stream to create a synchronized measurement.
+        Similar to the old script's approach where all IMUs are read together.
+        """
+        # Check if all streams have at least one sample
+        if not all(len(self._stream_buffers[s]) > 0 for s in ACTIVE_STREAMS):
+            return False
+        
+        # Consume oldest sample from each stream (FIFO)
+        quats = [None] * 4
+        accs = [None] * 4
+        
+        for stream in ACTIVE_STREAMS:
+            imu_idx = STREAM_TO_IMU_INDEX[stream]
+            quat, acc = self._stream_buffers[stream].popleft()
+            quats[imu_idx] = quat
+            accs[imu_idx] = acc
+        
+        # Create synchronized measurement
+        full_measurement = np.array([quats, accs])  # [2, 4, components]
+        
+        # Add to rolling buffer (similar to old script's truncation)
+        truncate = int(len(self._quat_buffer) == self._buffer_len)
+        self._quat_buffer = self._quat_buffer[truncate:] + [np.array(quats, dtype=float)]
+        self._acc_buffer = self._acc_buffer[truncate:] + [np.array(accs, dtype=float)]
+        
+        self._packet_count += 1
+        return True
+        
+    def start_reading(self):
+        """Start consuming samples into synchronized buffers"""
+        with self._lock:
+            self._is_reading = True
+            self._quat_buffer = []
+            self._acc_buffer = []
+            
+    def stop_reading(self):
+        """Stop consuming samples"""
+        with self._lock:
+            self._is_reading = False
+            
+    def clear_buffer(self):
+        """Clear the synchronized buffers"""
+        with self._lock:
+            self._quat_buffer = []
+            self._acc_buffer = []
+            
+    def update(self):
+        """
+        Try to consume synchronized samples.
+        Should be called regularly (e.g., in a loop or timer).
+        """
+        with self._lock:
+            if not self._is_reading:
+                return
+                
+            # Try to consume as many synchronized samples as possible
+            while self._try_consume_synchronized_sample():
+                pass
+                
+    def get_current_buffer(self):
+        """
+        Get current buffer as torch tensors.
+        Returns: (orientations, accelerations) as [buffer_len, 4, 4/3]
+        """
+        with self._lock:
+            if len(self._quat_buffer) == 0 or len(self._acc_buffer) == 0:
+                return torch.tensor([]), torch.tensor([])
+                
+            q = torch.tensor(np.array(self._quat_buffer), dtype=torch.float32)
+            a = torch.tensor(np.array(self._acc_buffer), dtype=torch.float32)
+            return q, a
+            
+    def has_new_data(self):
+        """Check if new data has been consumed since last check"""
+        with self._lock:
+            has_new = self._packet_count != self._last_packet_count
+            self._last_packet_count = self._packet_count
+            return has_new
+            
+    def get_packet_count(self):
+        """Get current packet count"""
+        with self._lock:
+            return self._packet_count
+
+# Global buffer instance
+imu_buffers = SynchronizedIMUBuffers(buffer_len=1)
 
 # Calibration matrices (will be set during calibration)
 smpl2imu = None
@@ -135,6 +243,9 @@ def parse_udp_payload(payload: bytes):
     Parse UDP payload to extract IMU data.
     Expected format: "<placement>;<type>:\n<rows...>"
     Each row: unix_timestamp sensor_timestamp gx gy gz fax fay faz qx qy qz qw avx avy avz
+    
+    Note: 'free_acc' (fax, fay, faz) is acceleration with gravity already removed by the sensor.
+          This matches the Movella DOT behavior where freeAcceleration() excludes gravity.
     
     Returns: list of (stream_key, unix_ts, sensor_ts, gravity, free_acc, quat, gyro)
     """
@@ -185,8 +296,8 @@ def parse_udp_payload(payload: bytes):
 # ======================= UDP receiver thread =======================
 
 def udp_receiver_thread(sockets):
-    """Continuously receive UDP packets and update timestamped buffers"""
-    global running, latest_airpods_timestamp
+    """Continuously receive UDP packets and add to stream buffers"""
+    global running
     
     empty = []
     while running:
@@ -209,16 +320,20 @@ def udp_receiver_thread(sockets):
                 # Convert quaternion from [qx, qy, qz, qw] to [qw, qx, qy, qz]
                 quat_wxyz = [quat[3], quat[0], quat[1], quat[2]]
                 
-                # Total acceleration = gravity + free_acc
-                total_acc = [gravity[i] + free_acc[i] for i in range(3)]
+                # Use free acceleration (gravity already removed by sensor)
+                # This matches the old Movella DOT script behavior
+                free_acceleration = free_acc
                 
-                with data_lock:
-                    # Add timestamped sample to buffer
-                    imu_buffers[stream_key].append((unix_ts, quat_wxyz, total_acc))
-                    
-                    # If AirPods (trigger sensor), signal inference
-                    if stream_key == 'pocket_headphone':
-                        trigger_queue.append(unix_ts)
+                # Add to synchronized buffer system
+                imu_buffers.add_sample(stream_key, quat_wxyz, free_acceleration)
+
+def buffer_update_thread():
+    """Background thread to consume samples into synchronized buffers"""
+    global running
+    
+    while running:
+        imu_buffers.update()
+        time.sleep(0.001)  # Check frequently for new data
 
 # ======================= Stream verification display =======================
 
@@ -228,11 +343,10 @@ def display_stream_status():
     print("STREAM VERIFICATION MODE")
     print("="*80)
     print("\nMonitoring UDP streams. Press 'c' when all 4 devices are streaming.")
-    print("\nRequired Device Setup:")
+    print("\nRequired Device Setup (ALL at 50Hz):")
     for stream in ACTIVE_STREAMS:
         imu_idx = STREAM_TO_IMU_INDEX[stream]
-        trigger = " [TRIGGER]" if stream == 'pocket_headphone' else ""
-        print(f"  - {STREAM_DISPLAY_NAMES[stream]} (IMU index {imu_idx}){trigger}")
+        print(f"  - {STREAM_DISPLAY_NAMES[stream]} (IMU index {imu_idx})")
     print("\nPress 'q' to quit\n")
     
     last_print = time.time()
@@ -241,10 +355,6 @@ def display_stream_status():
         now = time.time()
         
         if now - last_print > STATUS_INTERVAL:
-            # Get current stream status
-            with data_lock:
-                active_streams = [s for s in ACTIVE_STREAMS if len(imu_buffers[s]) > 0]
-            
             # Build status display
             lines = []
             lines.append("\n" + "-"*80)
@@ -254,10 +364,14 @@ def display_stream_status():
             # Show all required streams in anatomical order
             anatomical_order = ["pocket_watch", "frame_watch", "pocket_headphone", "pocket_phone"]
             
+            all_active = True
             for stream in anatomical_order:
                 fps = fps_meters[stream].get_fps(now)
-                is_active = stream in active_streams
+                is_active = fps > 10  # Consider active if getting data
                 imu_idx = STREAM_TO_IMU_INDEX[stream]
+                
+                if not is_active:
+                    all_active = False
                 
                 # Status indicator
                 status = "✓ ACTIVE " if is_active else "✗ MISSING"
@@ -267,23 +381,20 @@ def display_stream_status():
                 
                 # Build line with display name
                 display_name = STREAM_DISPLAY_NAMES[stream]
-                trigger_marker = " [TRIGGER]" if stream == 'pocket_headphone' else ""
-                line = f"  {status} | {display_name:35s} | {fps_str} | IMU[{imu_idx}]{trigger_marker}"
+                line = f"  {status} | {display_name:35s} | {fps_str} | IMU[{imu_idx}]"
                 
                 lines.append(line)
             
             # Summary
             lines.append("-"*80)
-            required_active = len(active_streams)
-            total_required = len(ACTIVE_STREAMS)
-            lines.append(f"Status: {required_active}/{total_required} devices streaming")
+            packet_count = imu_buffers.get_packet_count()
+            lines.append(f"Synchronized packets consumed: {packet_count}")
             
-            if required_active == total_required:
+            if all_active:
                 lines.append("✓ ALL DEVICES ACTIVE - Ready to proceed!")
                 lines.append("  Press 'c' to continue to model loading and calibration")
             else:
-                missing = [STREAM_DISPLAY_NAMES[s] for s in ACTIVE_STREAMS if s not in active_streams]
-                lines.append(f"⚠ Missing: {', '.join(missing)}")
+                lines.append("⚠ Waiting for all devices to stream...")
             
             lines.append("-"*80)
             
@@ -300,143 +411,138 @@ def display_stream_status():
         
         time.sleep(0.1)
 
-# ======================= Timestamp matching =======================
-
-def find_nearest_sample(buffer_deque, target_time, max_age_ms=50):
-    """
-    Find sample with timestamp closest to target_time.
-    
-    Args:
-        buffer_deque: deque of (timestamp, quat, acc) tuples
-        target_time: target timestamp to match
-        max_age_ms: maximum acceptable time difference in milliseconds
-    
-    Returns:
-        (quat, acc) tuple or None if no suitable match
-    """
-    if len(buffer_deque) == 0:
-        return None
-    
-    # Find closest timestamp
-    best_sample = None
-    best_diff = float('inf')
-    
-    for timestamp, quat, acc in buffer_deque:
-        diff = abs(timestamp - target_time)
-        if diff < best_diff:
-            best_diff = diff
-            best_sample = (quat, acc, diff)
-    
-    # Check if match is within acceptable range
-    if best_diff > (max_age_ms / 1000.0):
-        return None  # Too old/new
-    
-    return best_sample
-
-def get_synchronized_imu_measurement_nearest(target_time):
-    with data_lock:
-        quats, accs = [None] * 4, [None] * 4
-        match_errors = {}
-        
-        for stream in ACTIVE_STREAMS:
-            imu_idx = STREAM_TO_IMU_INDEX[stream]
-            
-            # Try strict matching first (100ms window)
-            result = find_nearest_sample(imu_buffers[stream], target_time, max_age_ms=100)
-            
-            if result:
-                quat, acc, diff = result
-                match_errors[stream] = diff * 1000
-            elif len(imu_buffers[stream]) > 0:
-                # FALLBACK: Matching failed, use the absolute latest data available
-                _, quat, acc = imu_buffers[stream][-1]
-                match_errors[stream] = -1 # Flag for "unsynced/late"
-            else:
-                return None, None, None # Truly no data received yet
-            
-            quats[imu_idx] = quat
-            accs[imu_idx] = acc
-            
-        return torch.tensor([quats]), torch.tensor([accs]), match_errors
-
 # ======================= Calibration =======================
 
-def get_current_imu_measurement():
+def get_mean_measurement_of_n_second(num_seconds=3, buffer_len=150):
     """
-    Aggregate latest IMU data from all active streams (for calibration only).
-    Returns data in WheelPoser order: [LeftWrist, RightWrist, Head, Pelvis]
-    Returns: (orientations, accelerations) as torch tensors [1, 4, 4/3]
-    """
-    with data_lock:
-        # Check all required streams have data
-        if not all(len(imu_buffers[s]) > 0 for s in ACTIVE_STREAMS):
-            return None, None
-        
-        # Build arrays in WheelPoser order - use most recent sample from each
-        quats = [None] * 4
-        accs = [None] * 4
-        
-        for stream in ACTIVE_STREAMS:
-            imu_idx = STREAM_TO_IMU_INDEX[stream]
-            # Get most recent sample
-            _, quat, acc = imu_buffers[stream][-1]
-            quats[imu_idx] = quat
-            accs[imu_idx] = acc
-        
-        # Verify no None values
-        if None in quats or None in accs:
-            return None, None
-        
-        # Convert to torch tensors
-        ori_tensor = torch.tensor([quats], dtype=torch.float32)  # [1, 4, 4]
-        acc_tensor = torch.tensor([accs], dtype=torch.float32)   # [1, 4, 3]
-        
-        return ori_tensor, acc_tensor
-
-def perform_calibration(wait_seconds=3):
-    """
-    Perform calibration by collecting samples over wait_seconds.
-    Returns calibration matrices.
-    """
-    print(f'\nCollecting {wait_seconds} seconds of calibration data...')
+    Collect IMU data for num_seconds and return the average of measurements.
+    Mimics the old IMUSet.get_mean_measurement_of_n_second function.
     
-    # Collect samples
-    quat_samples = []
-    acc_samples = []
-    start = time.time()
-    sample_count = 0
+    Args:
+        num_seconds: How many seconds to collect data
+        buffer_len: Buffer length for collection
     
-    while time.time() - start < wait_seconds:
-        ori, acc = get_current_imu_measurement()
-        if ori is not None and acc is not None:
-            quat_samples.append(ori)
-            acc_samples.append(acc)
-            sample_count += 1
-        time.sleep(0.01)
+    Returns:
+        Mean quaternion and acceleration torch.Tensor in shape [4, 4] and [4, 3] respectively.
+    """
+    print(f'Collecting {num_seconds} seconds of calibration data...')
     
-    if len(quat_samples) == 0:
+    # Temporarily use larger buffer for calibration
+    old_buffer_len = imu_buffers._buffer_len
+    imu_buffers._buffer_len = buffer_len
+    
+    # Clear and start reading
+    imu_buffers.clear_buffer()
+    imu_buffers.start_reading()
+    
+    # Wait for collection
+    time.sleep(num_seconds)
+    
+    # Stop reading
+    imu_buffers.stop_reading()
+    
+    # Get collected data
+    q, a = imu_buffers.get_current_buffer()
+    
+    # Restore buffer length
+    imu_buffers._buffer_len = old_buffer_len
+    
+    if q.size(0) == 0:
         raise RuntimeError("No IMU data received during calibration!")
     
-    print(f"Collected {sample_count} samples")
+    actual_samples = q.size(0)
+    actual_rate = actual_samples / num_seconds
+    expected_rate = 50  # All sensors at 50Hz
+    
+    print(f"Collected {actual_samples} samples over {num_seconds} seconds ({actual_rate:.1f} Hz)")
+    
+    if actual_rate < expected_rate * 0.7:
+        print(f"  ⚠ Warning: Sample rate is lower than expected ({expected_rate} Hz)")
     
     # Average the samples
-    oris = torch.cat(quat_samples, dim=0).mean(dim=0)  # [4, 4]
-    accs = torch.cat(acc_samples, dim=0).mean(dim=0)   # [4, 3]
+    oris = q.mean(dim=0)  # [4, 4] - quaternions for each IMU
+    accs = a.mean(dim=0)  # [4, 3] - accelerations for each IMU
     
-    # Import needed functions (lazy import for phase 2)
+    return oris, accs
+
+def perform_reference_frame_calibration():
+    """
+    STAGE 1: Establish the global reference frame using Left Wrist sensor.
+    This computes the smpl2imu rotation matrix that transforms from SMPL coordinate system
+    to the sensor's inertial frame.
+    
+    Returns:
+        smpl2imu: [3, 3] rotation matrix (global to sensor frame)
+    """
     from src.articulate.math import quaternion_to_rotation_matrix
     
-    # Compute calibration for sensor 0 (LeftWrist as reference)
-    smpl2imu_val = quaternion_to_rotation_matrix(oris[0]).view(3, 3).t()
+    print('\n[Stage 1/2] Reference Frame Calibration')
+    print('='*80)
+    input('Place Left Wrist sensor (pocket_watch) aligned with body reference frame:\n'
+          '  - x = Left\n'
+          '  - y = Up\n'
+          '  - z = Forward\n'
+          'Press Enter when ready.')
     
-    # Compute device2bone for all sensors
-    oris_mat = quaternion_to_rotation_matrix(oris)  # [4, 3, 3]
-    device2bone_val = smpl2imu_val.matmul(oris_mat).transpose(1, 2).matmul(torch.eye(3))
+    for i in range(3, 0, -1):
+        print(f'\rHold steady... {i}s', end='', flush=True)
+        time.sleep(1)
+    print()
     
-    # Compute acceleration offsets
-    acc_offsets_val = smpl2imu_val.matmul(accs.unsqueeze(-1))  # [4, 3, 1]
+    # Collect averaged orientation from all sensors (use Left Wrist only)
+    oris, _ = get_mean_measurement_of_n_second(num_seconds=3, buffer_len=200)
     
-    return smpl2imu_val, device2bone_val, acc_offsets_val
+    # Use only the Left Wrist (index 0) to establish reference frame
+    left_wrist_quat = oris[0]  # [4] quaternion
+    smpl2imu = quaternion_to_rotation_matrix(left_wrist_quat).view(3, 3).t()  # global to sensor frame
+    
+    print('✓ Reference frame established')
+    print(f'  smpl2imu rotation matrix computed from Left Wrist orientation')
+    
+    return smpl2imu
+
+def perform_tpose_calibration(smpl2imu):
+    """
+    STAGE 2: Calibrate sensor-to-bone transformations and acceleration offsets in T-pose.
+    This uses the reference frame from Stage 1 to compute device2bone rotations
+    and acceleration offsets for all sensors.
+    
+    Args:
+        smpl2imu: [3, 3] rotation matrix from Stage 1
+    
+    Returns:
+        device2bone: [4, 3, 3] rotation matrices for each sensor
+        acc_offsets: [4, 3, 1] acceleration offsets for each sensor
+    """
+    from src.articulate.math import quaternion_to_rotation_matrix
+    
+    print('\n[Stage 2/2] T-Pose Calibration')
+    print('='*80)
+    input('Wear all 4 IMUs correctly and stand in T-pose.\n'
+          'Press Enter when ready.')
+    
+    for i in range(3, 0, -1):
+        print(f'\rHold T-pose... {i}s', end='', flush=True)
+        time.sleep(1)
+    print()
+    
+    # Collect averaged measurements from all sensors
+    oris, accs = get_mean_measurement_of_n_second(num_seconds=3, buffer_len=200)
+    
+    # Convert quaternions to rotation matrices
+    oris_mat = quaternion_to_rotation_matrix(oris)  # [4, 3, 3] - sensor to global
+    
+    # Compute device2bone: transforms from device frame to bone frame
+    device2bone = smpl2imu.matmul(oris_mat).transpose(1, 2).matmul(torch.eye(3))
+    
+    # Compute acceleration offsets in global inertial frame
+    acc_offsets = smpl2imu.matmul(accs.unsqueeze(-1))  # [4, 3, 1]
+    
+    print('✓ T-pose calibration complete')
+    print(f'  device2bone matrices computed for all 4 sensors')
+    print(f'  Acceleration offsets computed')
+    
+    return device2bone, acc_offsets
 
 # ======================= Model loading =======================
 
@@ -551,15 +657,13 @@ def input_thread():
             inference_mode = False
         elif c == 'c' and verification_mode:
             # Check if all required streams are active
-            with data_lock:
-                active = [s for s in ACTIVE_STREAMS if len(imu_buffers[s]) > 0]
+            all_active = all(fps_meters[s].get_fps(time.time()) > 10 for s in ACTIVE_STREAMS)
             
-            if all(s in active for s in ACTIVE_STREAMS):
+            if all_active:
                 verification_mode = False
                 print("\n✓ Proceeding to model loading phase...")
             else:
-                missing = [STREAM_DISPLAY_NAMES[s] for s in ACTIVE_STREAMS if s not in active]
-                print(f"\n⚠ Cannot proceed - missing devices: {', '.join(missing)}")
+                print(f"\n⚠ Cannot proceed - not all devices are streaming at sufficient rate")
         elif c == 'r' and inference_mode:
             start_recording = True
             print("\n[REC] Recording started")
@@ -570,9 +674,8 @@ def input_thread():
 # ======================= Inference loop =======================
 
 def run_inference(wheelposer, config):
-    """Run the main inference loop (Phase 2) - Event-driven by AirPods"""
+    """Run the main inference loop (Phase 2) - Synchronized 50Hz"""
     global inference_mode, is_recording, record_buffer, record_session_start, start_recording
-    global latest_airpods_timestamp
     
     from src.articulate.math import quaternion_to_rotation_matrix
     import pygame
@@ -601,75 +704,44 @@ def run_inference(wheelposer, config):
             conn = None
     
     print("\n" + "="*80)
-    print("LIVE INFERENCE MODE - Event-Driven @ ~50Hz")
+    print("LIVE INFERENCE MODE - Synchronized 50Hz")
     print("="*80)
-    print("Triggered by AirPods packets, nearest-neighbor matching for other sensors")
+    print("All sensors at 50Hz, synchronized buffer consumption")
     print("Controls: [r] start recording | [s] stop recording | [q] quit")
     print()
     
-    # Timing diagnostics
-    timing_samples = {
-        'wait_trigger': [],
-        'data_fetch': [],
-        'calibration': [],
-        'normalization': [],
-        'inference': [],
-        'total_loop': []
-    }
-    diagnostic_mode = True
+    # Start reading from synchronized buffers
+    imu_buffers.start_reading()
     
     # Statistics
-    match_quality = {stream: [] for stream in ACTIVE_STREAMS if stream != 'pocket_headphone'}
     frames_processed = 0
-    frames_skipped = 0
+    old_packet_count = 0
     
     pygame.init()
     last_status_time = time.time()
     
-    # Warmup: wait for initial data
-    print("Warming up... waiting for initial data from all sensors...")
-    warmup_start = time.time()
-    while time.time() - warmup_start < 0.2:  # 200ms warmup
-        with data_lock:
-            if all(len(imu_buffers[s]) > 0 for s in ACTIVE_STREAMS):
-                break
-        time.sleep(0.01)
-    print("✓ Warmup complete")
+    # Warmup
+    print("Warming up...")
+    time.sleep(0.5)
+    print("✓ Starting inference")
     
     try:
         while inference_mode and running:
-            # 1. NEW TRIGGER LOGIC: Check the queue instead of waiting on a single event
-            # This handles bursty network traffic where multiple packets arrive at once
-            if not trigger_queue:
-                time.sleep(0.001)  # Minimal sleep to keep CPU usage low
+            # Check if new data is available (similar to old script's packet_count check)
+            current_packet_count = imu_buffers.get_packet_count()
+            
+            if current_packet_count == old_packet_count:
+                # No new data, wait a bit
+                time.sleep(0.001)
                 continue
-                
-            t_loop_start = time.time()
             
-            # Pop the oldest timestamp from the trigger queue
-            t0 = time.time()
-            target_time = trigger_queue.popleft()
-            t1 = time.time()
+            old_packet_count = current_packet_count
             
-            # 2. Get measurements using the Nearest Neighbor Sync function
-            # This uses nearest-neighbor but falls back to 'latest' if sync is slightly out of bounds
-            t2 = time.time()
-            ori_raw, acc_raw, match_errors = get_synchronized_imu_measurement_nearest(target_time)
-            t3 = time.time()
+            # Get current buffer (similar to old script's get_current_buffer)
+            ori_raw, acc_raw = imu_buffers.get_current_buffer()
             
-            # Only skip if a sensor is completely missing (not even a fallback sample available)
-            if ori_raw is None or acc_raw is None:
-                frames_skipped += 1
-                continue 
-            
-            # Track matching quality (Preserved your diagnostics)
-            if diagnostic_mode and match_errors:
-                for stream, error_ms in match_errors.items():
-                    if stream in match_quality:
-                        # Note: -1.0 indicates a fallback 'latest' sample was used
-                        match_quality[stream].append(error_ms)
-                        if len(match_quality[stream]) > 100:
-                            match_quality[stream] = match_quality[stream][-100:]
+            if ori_raw.size(0) == 0 or acc_raw.size(0) == 0:
+                continue
             
             frames_processed += 1
             
@@ -677,32 +749,26 @@ def run_inference(wheelposer, config):
             ori_raw = ori_raw.to(device)
             acc_raw = acc_raw.to(device)
             
-            # Calibrate (Preserved your math)
-            t4 = time.time()
+            # Calibrate (same as old script)
             ori_raw = quaternion_to_rotation_matrix(ori_raw).view(1, 4, 3, 3)
             acc_cal = (smpl2imu.matmul(acc_raw.view(-1, 4, 3, 1)) - acc_offsets).view(1, 4, 3)
             ori_cal = smpl2imu.matmul(ori_raw).matmul(device2bone)
             imu_recording = torch.cat((acc_cal.view(-1, 12), ori_cal.view(-1, 36)), dim=1)
-            t5 = time.time()
             
-            # Normalize for model
-            t6 = time.time()
+            # Normalize for model (same as old script)
             acc = torch.cat((acc_cal[:, :3] - acc_cal[:, 3:], acc_cal[:, 3:]), dim=1).bmm(ori_cal[:, -1]) / config.acc_scale
             ori = torch.cat((ori_cal[:, 3:].transpose(2, 3).matmul(ori_cal[:, :3]), ori_cal[:, 3:]), dim=1)
             data_nn = torch.cat((acc.view(-1, 12), ori.view(-1, 36)), dim=1)
-            t7 = time.time()
             
             # Run inference
-            t8 = time.time()
             with torch.no_grad():
                 pose = wheelposer.forward_online(data_nn)
             tran = torch.tensor([0, -0.4, -0.1055]).to(device)
-            t9 = time.time()
             
             # Update FPS
             inference_fps.update(time.time())
             
-            # Recording (Preserved your recording logic)
+            # Recording (same as old script)
             if not is_recording and start_recording:
                 record_buffer = imu_recording.view(1, -1)
                 is_recording = True
@@ -727,22 +793,7 @@ def run_inference(wheelposer, config):
                 except:
                     pass
             
-            t_loop_end = time.time()
-            
-            # Collect timing stats (Preserved your timing diagnostics)
-            if diagnostic_mode:
-                timing_samples['wait_trigger'].append((t1 - t0) * 1000)
-                timing_samples['data_fetch'].append((t3 - t2) * 1000)
-                timing_samples['calibration'].append((t5 - t4) * 1000)
-                timing_samples['normalization'].append((t7 - t6) * 1000)
-                timing_samples['inference'].append((t9 - t8) * 1000)
-                timing_samples['total_loop'].append((t_loop_end - t_loop_start) * 1000)
-                
-                for key in timing_samples:
-                    if len(timing_samples[key]) > 100:
-                        timing_samples[key] = timing_samples[key][-100:]
-            
-            # Status print (Preserved your UI)
+            # Status print
             now = time.time()
             if now - last_status_time > STATUS_INTERVAL:
                 status_parts = []
@@ -755,21 +806,7 @@ def run_inference(wheelposer, config):
                 inf_fps = inference_fps.get_fps(now)
                 rec_status = "●REC" if is_recording else "○---"
                 
-                if diagnostic_mode and frames_processed > 10:
-                    avg_times = {k: np.mean(v) for k, v in timing_samples.items() if len(v) > 0}
-                    avg_match = {stream: np.mean(match_quality[stream]) if len(match_quality[stream]) > 0 else 0 
-                                 for stream in match_quality}
-                    
-                    timing_str = f" | Loop:{avg_times.get('total_loop', 0):.1f}ms [Fetch:{avg_times.get('data_fetch', 0):.1f} Inf:{avg_times.get('inference', 0):.1f}]"
-                    match_str = f" | Match: PW:{avg_match.get('pocket_watch', 0):.1f}ms FW:{avg_match.get('frame_watch', 0):.1f}ms PP:{avg_match.get('pocket_phone', 0):.1f}ms"
-                    
-                    total_frames = frames_processed + frames_skipped
-                    success_rate = (frames_processed / total_frames * 100) if total_frames > 0 else 0
-                    skip_str = f" | Skip:{frames_skipped}({success_rate:.0f}%)"
-                else:
-                    timing_str = match_str = skip_str = ""
-                
-                print(f"\r[{rec_status}] {stream_status} | Inf:{inf_fps:5.1f} FPS{timing_str}{match_str}{skip_str}", 
+                print(f"\r[{rec_status}] {stream_status} | Inf:{inf_fps:5.1f} Hz | Frames:{frames_processed}", 
                       end="", flush=True)
                 last_status_time = now
     
@@ -782,30 +819,14 @@ def run_inference(wheelposer, config):
             except:
                 pass
         
+        imu_buffers.stop_reading()
+        
         # Print final statistics
         if frames_processed > 0:
             print(f"\n\n{'='*80}")
             print("FINAL STATISTICS")
             print('='*80)
             print(f"Frames processed: {frames_processed}")
-            print(f"Frames skipped: {frames_skipped}")
-            total = frames_processed + frames_skipped
-            print(f"Success rate: {frames_processed/total*100:.1f}%")
-            
-            if diagnostic_mode and match_quality:
-                print(f"\nTimestamp Matching Quality:")
-                for stream in ['pocket_watch', 'frame_watch', 'pocket_phone']:
-                    if stream in match_quality and len(match_quality[stream]) > 0:
-                        avg = np.mean(match_quality[stream])
-                        std = np.std(match_quality[stream])
-                        max_err = np.max(match_quality[stream])
-                        print(f"  {STREAM_DISPLAY_NAMES[stream]:40s}: {avg:5.2f}ms ± {std:4.2f}ms (max: {max_err:.2f}ms)")
-                
-                print(f"\nTiming Breakdown (average):")
-                for key, samples in timing_samples.items():
-                    if len(samples) > 0:
-                        print(f"  {key:20s}: {np.mean(samples):6.2f}ms")
-            
             print('='*80)
 
 # ======================= Main =======================
@@ -814,19 +835,19 @@ def main():
     global running, verification_mode, smpl2imu, device2bone, acc_offsets
     
     print("\n" + "="*80)
-    print("WHEELPOSER LIVE INFERENCE - EVENT-DRIVEN PIPELINE")
+    print("WHEELPOSER LIVE INFERENCE - SYNCHRONIZED 50Hz PIPELINE")
     print("="*80)
     print(f"\nPlatform: {platform.system()}")
     print(f"Device: {device}")
     print("\nDevice Configuration:")
-    print("  - Left Wrist:  pocket_watch (100 Hz)")
-    print("  - Right Wrist: frame_watch (100 Hz)")
-    print("  - Head:        pocket_headphone (50 Hz) [TRIGGER SENSOR]")
-    print("  - Pelvis:      pocket_phone (100 Hz)")
+    print("  - Left Wrist:  pocket_watch (50 Hz)")
+    print("  - Right Wrist: frame_watch (50 Hz)")
+    print("  - Head:        pocket_headphone (50 Hz)")
+    print("  - Pelvis:      pocket_phone (50 Hz)")
     print("\nArchitecture:")
-    print("  - Event-driven inference triggered by AirPods @ 50 Hz")
-    print("  - Nearest-neighbor timestamp matching for 100 Hz sensors")
-    print("  - Expected latency: ~20-30ms")
+    print("  - All sensors synchronized at 50 Hz")
+    print("  - Fixed-length buffers with FIFO consumption")
+    print("  - Similar to original IMUSet approach")
     print("\nPhase 1: Stream Verification")
     print("Phase 2: Model Loading → Calibration → Inference")
     print()
@@ -855,6 +876,10 @@ def main():
     udp_thread = threading.Thread(target=udp_receiver_thread, args=(sockets,), daemon=True)
     udp_thread.start()
     
+    # Start buffer update thread
+    buffer_thread = threading.Thread(target=buffer_update_thread, daemon=True)
+    buffer_thread.start()
+    
     # Start keyboard input thread
     input_thread_obj = threading.Thread(target=input_thread, daemon=True)
     input_thread_obj.start()
@@ -869,10 +894,8 @@ def main():
     
     if not running:
         print("\nExiting...")
-        # Signal threads to stop
         running = False
-        time.sleep(0.5)  # Give threads time to exit select()
-        # Close sockets
+        time.sleep(0.5)
         for s in sockets:
             try:
                 s.close()
@@ -901,34 +924,28 @@ def main():
     print("\n" + "="*80)
     print("CALIBRATION")
     print("="*80)
+    print("\nTwo-stage calibration process:")
+    print("  Stage 1: Establish global reference frame (Left Wrist sensor)")
+    print("  Stage 2: Calibrate all sensors in T-pose")
     
     try:
-        input('\n[Step 1/2] Place Left Wrist sensor (pocket_watch) aligned with body frame\n'
-              '           (x=Left, y=Up, z=Forward) and press Enter.')
+        # Stage 1: Reference frame calibration
+        smpl2imu = perform_reference_frame_calibration()
         
-        for i in range(3, 0, -1):
-            print(f'\rHold steady... {i}s', end='', flush=True)
-            time.sleep(1)
-        
-        print('\nCollecting reference orientation...')
-        smpl2imu_temp, _, _ = perform_calibration(wait_seconds=3)
-        print("✓ Reference frame established")
-        
-        input('\n[Step 2/2] Wear all 4 IMUs and stand in T-pose. Press Enter when ready.')
-        for i in range(3, 0, -1):
-            print(f'\rHold T-pose... {i}s', end='', flush=True)
-            time.sleep(1)
-        
-        print('\nCollecting T-pose calibration...')
-        smpl2imu, device2bone, acc_offsets = perform_calibration(wait_seconds=3)
+        # Stage 2: T-pose calibration
+        device2bone, acc_offsets = perform_tpose_calibration(smpl2imu)
         
         # Move to device
         smpl2imu = smpl2imu.to(device)
         device2bone = device2bone.to(device)
         acc_offsets = acc_offsets.to(device)
         
-        print("✓ Calibration complete")
+        print("\n" + "="*80)
+        print("✓ CALIBRATION COMPLETE")
         print("="*80)
+        print(f"  smpl2imu shape: {smpl2imu.shape}")
+        print(f"  device2bone shape: {device2bone.shape}")
+        print(f"  acc_offsets shape: {acc_offsets.shape}")
         
         # ===== PHASE 2: Inference =====
         run_inference(wheelposer, config)
@@ -948,10 +965,8 @@ def main():
         verification_mode = False
         inference_mode = False
         
-        # Wait for threads to notice running=False and exit select()
         time.sleep(0.5)
         
-        # Now close sockets
         for s in sockets:
             try:
                 s.close()
